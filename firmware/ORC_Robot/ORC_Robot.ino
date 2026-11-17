@@ -4,12 +4,12 @@
  * Dữ liệu   path_data.h   : tạo bằng app ORC Path Planner (nút "Tải path_data.h"), chép đè vào thư mục này
  *
  * Phần cứng: ESP32 thường + 4 motor mecanum (H-bridge, 2 chân PWM/motor), PMW3901 (SPI),
- *            ICM-20948 (I2C), ToF VL53L1X (I2C, XSHUT), công tắc chạm, stepper NEMA17 cho lift.
+ *            ICM-20948 (I2C), công tắc chạm, stepper NEMA17 cho lift.
  *
  * Board: "ESP32 Dev Module" trong gói "esp32_bluepad32" (Boards Manager URL:
  *   https://raw.githubusercontent.com/ricardoquesada/esp32-arduino-lib-builder/master/bluepad32_files/package_esp32_bluepad32_index.json)
  * Thư viện (Library Manager): FastAccelStepper, "SparkFun 9DoF IMU Breakout - ICM 20948",
- *   "Bitcraze PMW3901", "VL53L1X" (của Pololu).
+ *   "Bitcraze PMW3901".
  *
  * Tay cầm (chế độ THỦ CÔNG):
  *   Cần trái: chạy tới/lùi/ngang     Cần phải (ngang): xoay      Giữ L2: chạy chậm
@@ -30,7 +30,6 @@
 #include <FastAccelStepper.h>
 #include <ICM_20948.h>
 #include <Bitcraze_PMW3901.h>
-#include <VL53L1X.h>
 #include "path_data.h"
 
 // =====================================================================
@@ -77,12 +76,6 @@ const float FLOW_MAX_JUMP_MM = 40.0f;   // bỏ qua giá trị nhảy bất thư
 const bool  ICM_AD0 = true;         // true: địa chỉ 0x69, false: 0x68
 const int   GYRO_SIGN = 1;          // quay xe NGƯỢC chiều kim đồng hồ mà θ giảm => đặt -1
 const float GYRO_SCALE = 1.000f;    // HIỆU CHỈNH: quay đúng 10 vòng, gõ 'g', lấy 3600 / số độ in ra
-
-// ---- ToF VL53L1X (PHẢI khớp ô "Vị trí ToF" trong app) ----
-const int   TOF_COUNT = 2;
-const int   TOF_XSHUT[TOF_COUNT]     = {2, 15};
-const int   TOF_SIDE[TOF_COUNT]      = {0, 3};        // 0 trước, 1 trái, 2 sau, 3 phải
-const float TOF_OFFSET_MM[TOF_COUNT] = {190, 190};    // từ tâm robot tới mặt cảm biến
 
 // ---- Công tắc chạm để ép tường: [mặt robot][2 công tắc], -1 = không có ----
 // Chân 34–39 không có trở kéo lên trong: cần trở 10k kéo lên 3.3V.
@@ -144,11 +137,6 @@ float rawFlowX = 0, rawFlowY = 0, gyroAccumDeg = 0;   // để hiệu chỉnh
 
 ICM_20948_I2C icm;
 Bitcraze_PMW3901 flow(FLOW_CS);
-VL53L1X tof[TOF_COUNT];
-bool tofOk[TOF_COUNT] = {};
-float tofMM[TOF_COUNT] = {};
-bool tofValid[TOF_COUNT] = {};
-uint32_t tofStamp[TOF_COUNT] = {};
 
 FastAccelStepperEngine stepperEngine;
 FastAccelStepper *lift = nullptr;
@@ -340,33 +328,6 @@ void updateFlow(uint32_t now) {
   poseY += fy;
   velX = 0.7f * velX + 0.3f * fx / dts;
   velY = 0.7f * velY + 0.3f * fy / dts;
-}
-
-void setupTof() {
-  for (int i = 0; i < TOF_COUNT; i++) { pinMode(TOF_XSHUT[i], OUTPUT); digitalWrite(TOF_XSHUT[i], LOW); }
-  delay(10);
-  for (int i = 0; i < TOF_COUNT; i++) {
-    digitalWrite(TOF_XSHUT[i], HIGH);
-    delay(10);
-    tof[i].setTimeout(100);
-    if (!tof[i].init()) { Serial.printf("[TOF] Cảm biến #%d lỗi!\n", i); continue; }
-    tof[i].setAddress(0x30 + i);
-    tof[i].setDistanceMode(VL53L1X::Long);
-    tof[i].setMeasurementTimingBudget(33000);
-    tof[i].startContinuous(40);
-    tofOk[i] = true;
-    Serial.printf("[TOF] #%d OK\n", i);
-  }
-}
-
-void updateTof() {
-  for (int i = 0; i < TOF_COUNT; i++) {
-    if (!tofOk[i] || !tof[i].dataReady()) continue;
-    uint16_t d = tof[i].read(false);
-    tofValid[i] = (tof[i].ranging_data.range_status == VL53L1X::RangeValid);
-    tofMM[i] = d;
-    tofStamp[i] = millis();
-  }
 }
 
 void setupTouch() {
@@ -562,9 +523,8 @@ void telemetry() {
   static uint32_t last = 0;
   if (!telemetryOn || millis() - last < 200) return;
   last = millis();
-  Serial.printf("x=%7.1f y=%7.1f th=%7.2f° | v=%5.0f | lift=%5.1f | tof:", poseX, poseY, poseTh * RAD_TO_DEG,
+  Serial.printf("x=%7.1f y=%7.1f th=%7.2f° | v=%5.0f | lift=%5.1f", poseX, poseY, poseTh * RAD_TO_DEG,
                 hypotf(velX, velY), liftPosMM());
-  for (int i = 0; i < TOF_COUNT; i++) Serial.printf(" %4.0f%s", tofMM[i], tofValid[i] ? "" : "?");
   Serial.printf(" | chạm sau:%d | %s | %s\n", touchPressed(2), mode == MODE_AUTO ? "AUTO" : "MAN", autoStatus());
 }
 
@@ -580,7 +540,6 @@ void setup() {
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(400000);
   setupTouch();
-  setupTof();
   setupFlow();
   setupImu();
   setupLift();
@@ -599,7 +558,6 @@ void loop() {
   uint32_t now = micros();
   updateImu(now);
   updateFlow(now);
-  updateTof();
   handleSerial();
 
   static uint32_t lastCtrl = micros();

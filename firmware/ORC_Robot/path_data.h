@@ -1,19 +1,20 @@
 // path_data.h — tạo bởi ORC Path Planner
-// Path: demo   |   16:16:18 17/11/2026
-// 6 điểm, 488 mẫu (20 ms), 12 bước, ~13.1 s
-// Hệ toạ độ: gốc góc dưới-trái sân, x sang phải, y lên trên (mm). θ: rad, ngược chiều kim đồng hồ, 0 = hướng +x.
+// Path: demo   |   18:48:28 17/11/2026
+// 6 điểm, 488 mẫu (20 ms), 11 bước, ~12.8 s
+// Sân 364 x 364 cm, robot 40 x 40 cm
+// Đơn vị trong file: mm. Gốc góc dưới-trái sân, x sang phải, y lên trên. θ: rad, ngược chiều kim đồng hồ, 0 = hướng +x.
 #pragma once
 #include <stdint.h>
 
 #define PATH_NAME "demo"
-#define FIELD_W_MM 3000.0f
-#define FIELD_H_MM 2000.0f
+#define FIELD_W_MM 3640.0f
+#define FIELD_H_MM 3640.0f
 #define START_X_MM 300.0f
 #define START_Y_MM 300.0f
 #define START_TH_RAD 1.57080f
 #define TRAJ_DT_S 0.0200f
 #define TRAJ_COUNT 488
-#define STEP_COUNT 12
+#define STEP_COUNT 11
 
 #ifndef ORC_PATH_TYPES
 #define ORC_PATH_TYPES
@@ -23,7 +24,7 @@ enum StepType : uint8_t { ST_FOLLOW = 0, ST_LIFT = 1, ST_WAIT = 2, ST_WALL = 3, 
 #define SF_CONTINUE 0x02  // FOLLOW: không dừng ở cuối đoạn
 // FOLLOW: a..b = chỉ số mẫu | LIFT: p1 = mm | WAIT: p1 = ms
 // WALL: a = mặt robot (0 trước,1 trái,2 sau,3 phải), b = tường (0 trái,1 phải,2 dưới,3 trên), p1 = timeout ms
-// TOF: a = số cảm biến, b = tường, p1 = sửa tối đa mm | CUSTOM: a = id, p1 = tham số
+// CUSTOM: a = id, p1 = tham số   (ST_TOF giữ lại cho tương thích, không còn dùng)
 struct AutoStep { uint8_t type; uint8_t flags; int32_t a; int32_t b; float p1; float p2; };
 #endif
 
@@ -520,15 +521,14 @@ const TrajPt TRAJ[TRAJ_COUNT] = {
 
 const AutoStep STEPS[STEP_COUNT] = {
   {0, 2, 0, 83, 0.0f, 0.0f},  // đi → #1
-  {1, 1, 0, 0, 200.0f, 0.0f},  // #1 lift 200mm
+  {1, 1, 0, 0, 200.0f, 0.0f},  // #1 lift 20cm
   {0, 0, 83, 170, 0.0f, 0.0f},  // đi → #2
   {2, 0, 0, 0, 300.0f, 0.0f},  // #2 chờ 300ms
   {0, 0, 171, 293, 0.0f, 0.0f},  // đi → #3
   {3, 0, 2, 2, 2500.0f, 0.0f},  // #3 ép tường
-  {4, 0, 0, 3, 150.0f, 0.0f},  // #3 ToF0
   {0, 2, 294, 413, 0.0f, 0.0f},  // đi → #4
   {5, 1, 1, 0, 400.0f, 0.0f},  // #4 custom 1
   {0, 0, 413, 487, 0.0f, 0.0f},  // đi → #5
-  {1, 0, 0, 0, 400.0f, 0.0f},  // #5 lift 400mm
+  {1, 0, 0, 0, 400.0f, 0.0f},  // #5 lift 40cm
   {5, 0, 1, 0, 300.0f, 0.0f},  // #5 custom 1
 };

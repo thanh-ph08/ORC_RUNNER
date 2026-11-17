@@ -6,7 +6,6 @@
  *   LIFT   : đưa lift tới p1 mm (có thể chạy song song)
  *   WAIT   : chờ p1 ms
  *   WALL   : chạy chậm vào tường tới khi công tắc chạm => đặt lại toạ độ + góc
- *   TOF    : đo khoảng cách tới tường => sửa một toạ độ
  *   CUSTOM : gọi runCustomAction(id, tham số) — tự viết ở cuối file này
  *
  * Không có encoder nên quỹ đạo có "đồng hồ co giãn": robot tụt lại xa điểm đích
@@ -41,10 +40,6 @@ const uint32_t APPROACH_TIMEOUT_MS = 3000;
 // Ép tường
 const float WALL_SPEED_MMS = 180.0f;
 const uint32_t WALL_PUSH_MS = 300;
-// ToF
-const float TOF_MAX_ANGLE_DEG = 15.0f;
-const int   TOF_SAMPLES = 3;
-const uint32_t TOF_TIMEOUT_MS = 500;
 // Lift
 const uint32_t LIFT_WAIT_TIMEOUT_MS = 10000;
 
@@ -52,8 +47,8 @@ const bool AUTO_RESET_POSE_ON_START = true;   // bấm chạy tự động => đ
 
 // ============================ TRẠNG THÁI =============================
 enum AutoPhase { AP_IDLE, AP_APPROACH, AP_FOLLOW, AP_SETTLE, AP_WAIT, AP_LIFT, AP_WALL_DRIVE, AP_WALL_PUSH,
-                 AP_TOF, AP_CUSTOM, AP_DONE };
-const char *PHASE_NAME[] = {"idle", "approach", "follow", "settle", "wait", "lift", "wall", "push", "tof", "custom", "done"};
+                 AP_CUSTOM, AP_DONE };
+const char *PHASE_NAME[] = {"idle", "approach", "follow", "settle", "wait", "lift", "wall", "push", "custom", "done"};
 
 AutoPhase autoPhase = AP_IDLE;
 int autoStep = 0;
@@ -62,9 +57,8 @@ float trajIdx = 0;
 bool lastFollowContinue = false;
 int32_t lastFollowEnd = -1;
 float iX = 0, iY = 0, iTh = 0, prevEx = 0, prevEy = 0;
-// WALL / TOF
+// WALL
 float wallTargetTh = 0;
-int tofCount = 0; float tofSum = 0; uint32_t tofLastStamp = 0;
 // CUSTOM chạy song song (1 suất)
 int asyncCustomId = -1; float asyncCustomParam = 0;
 
@@ -99,7 +93,6 @@ void setCoordFromWall(int wall, float perp) {
     default: poseY = FIELD_H_MM - perp; break;
   }
 }
-float coordForWall(int wall) { return (wall <= 1) ? poseX : poseY; }
 
 // Lấy điểm quỹ đạo tại chỉ số thực (nội suy)
 void trajAt(float fi, TrajPt &out) {
@@ -200,12 +193,6 @@ void beginStep() {
       setPhase(AP_WALL_DRIVE);
       break;
     }
-    case ST_TOF:
-      stopMotors();
-      tofCount = 0; tofSum = 0;
-      tofLastStamp = (s.a >= 0 && s.a < TOF_COUNT) ? tofStamp[s.a] : 0;
-      setPhase(AP_TOF);
-      break;
     case ST_CUSTOM:
       if (s.flags & SF_ASYNC) {
         asyncCustomId = s.a; asyncCustomParam = s.p1;
@@ -305,41 +292,6 @@ void autoUpdate(float dt) {
         setCoordFromWall(s.b, dist);
         Serial.printf("[AUTO] Ép tường: sửa dx=%.0f dy=%.0f dθ=%.1f°\n", poseX - oldX, poseY - oldY,
                       (poseTh - oldTh) * RAD_TO_DEG);
-        resetPid();
-        nextStep();
-      }
-      break;
-    }
-    case AP_TOF: {
-      stopMotors();
-      int i = s.a;
-      if (i < 0 || i >= TOF_COUNT || !tofOk[i]) { Serial.println("[AUTO] ToF không sẵn sàng"); nextStep(); break; }
-      if (tofStamp[i] != tofLastStamp) {
-        tofLastStamp = tofStamp[i];
-        if (tofValid[i]) { tofSum += tofMM[i]; tofCount++; }
-      }
-      if (tofCount >= TOF_SAMPLES || phaseMs() > TOF_TIMEOUT_MS) {
-        if (tofCount > 0) {
-          float d = tofSum / tofCount;
-          float dirErr = wrapPi(poseTh + sideAngle(TOF_SIDE[i]) - wallNormal(s.b));
-          if (fabsf(dirErr) > TOF_MAX_ANGLE_DEG * DEG_TO_RAD) {
-            Serial.printf("[AUTO] ToF%d: lệch %.0f° so với tường, bỏ qua\n", i, dirErr * RAD_TO_DEG);
-          } else {
-            float perp = (d + TOF_OFFSET_MM[i]) * cosf(dirErr);
-            float before = coordForWall(s.b);
-            float ox = poseX, oy = poseY;
-            setCoordFromWall(s.b, perp);
-            float corr = coordForWall(s.b) - before;
-            if (fabsf(corr) > s.p1) {
-              poseX = ox; poseY = oy;
-              Serial.printf("[AUTO] ToF%d: sửa %.0f mm quá lớn, bỏ qua\n", i, corr);
-            } else {
-              Serial.printf("[AUTO] ToF%d: d=%.0f mm, sửa %.0f mm\n", i, d, corr);
-            }
-          }
-        } else {
-          Serial.printf("[AUTO] ToF%d: không có số đo hợp lệ\n", i);
-        }
         resetPid();
         nextStep();
       }

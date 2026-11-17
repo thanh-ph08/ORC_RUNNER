@@ -158,7 +158,7 @@ const Core = (() => {
       v: 2, name: 'auto1',
       field: { w: 3640, h: 3640, grid: 100, snap: 10, bgOpacity: 0.9, margin: 30, wallMargin: 30, autoSettle: true },
       robot: { len: 400, wid: 400, vmax: 800, amax: 1000, alat: 800, wmax: 180, walpha: 360, dt: 20,
-               liftSpeed: 250, tofSides: 'front,right', objGap: 20 },
+               liftSpeed: 250, objGap: 20 },
       regions: [],
       points: [
         { x: 400, y: 400, th: 90, stop: true, vmax: 0, actions: [] },
@@ -529,7 +529,7 @@ const Core = (() => {
           const dWall = { left: p.x, right: field.w - p.x, bottom: p.y, top: field.h - p.y }[a.wall] - sideDist(a.side, robot);
           if (dWall > 300) warnings.push(`Điểm #${idx}: cách tường ${cm(dWall)} cm, nên đặt gần tường hơn (<30 cm).`);
         } else if (a.type === 'tof') {
-          steps.push({ type: ST.TOF, flags: 0, a: a.sensor | 0, b: WALLS.indexOf(a.wall), p1: +a.maxCorr || 150, p2: 0, label: `#${idx} ToF${a.sensor}` });
+          warnings.push(`Điểm #${idx}: đã bỏ ToF, hành động ToF cũ bị bỏ qua — hãy xoá nó.`);
         }
       }
     };
@@ -571,7 +571,6 @@ const Core = (() => {
       else if (s.type === ST.WAIT) dur = s.p1 / 1000;
       else if (s.type === ST.LIFT) { if (!(s.flags & SF_ASYNC)) dur = Math.abs(s.p1 - liftH) / robot.liftSpeed; liftH = s.p1; }
       else if (s.type === ST.WALL) dur = 1.5;
-      else if (s.type === ST.TOF) dur = 0.3;
       else if (s.type === ST.CUSTOM) dur = (s.flags & SF_ASYNC) ? 0 : 0.5;
       schedule.push({ step: s, t0: t, t1: t + dur }); t += dur;
     }
@@ -624,7 +623,7 @@ const Core = (() => {
     L.push(`#define SF_CONTINUE 0x02  // FOLLOW: không dừng ở cuối đoạn`);
     L.push(`// FOLLOW: a..b = chỉ số mẫu | LIFT: p1 = mm | WAIT: p1 = ms`);
     L.push(`// WALL: a = mặt robot (0 trước,1 trái,2 sau,3 phải), b = tường (0 trái,1 phải,2 dưới,3 trên), p1 = timeout ms`);
-    L.push(`// TOF: a = số cảm biến, b = tường, p1 = sửa tối đa mm | CUSTOM: a = id, p1 = tham số`);
+    L.push(`// CUSTOM: a = id, p1 = tham số   (ST_TOF giữ lại cho tương thích, không còn dùng)`);
     L.push(`struct AutoStep { uint8_t type; uint8_t flags; int32_t a; int32_t b; float p1; float p2; };`);
     L.push(`#endif`);
     L.push('');
@@ -639,13 +638,11 @@ const Core = (() => {
   }
 
   function mirror(state, axis) {
-    const tofSides = String(state.robot.tofSides || '').split(',').map(s => s.trim());
     for (const p of state.points) {
       if (axis === 'x') { p.x = state.field.w - p.x; p.th = wrap180(180 - p.th); }
       else { p.y = state.field.h - p.y; p.th = wrap180(-p.th); }
       for (const a of p.actions || []) {
         if (a.type === 'wall') { a.side = sideFromAngle(-SIDE_ANG[a.side]); a.wall = wallFacing(p.th + SIDE_ANG[a.side]); }
-        else if (a.type === 'tof') a.wall = wallFacing(p.th + (SIDE_ANG[tofSides[a.sensor] || 'front'] ?? 0));
       }
     }
   }
@@ -726,7 +723,7 @@ const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).
 function handlePos(i) { const p = S.points[i], L = Math.max(S.robot.len, S.robot.wid) * 0.85; return [p.x + L * Math.cos(p.th * C.D2R), p.y + L * Math.sin(p.th * C.D2R)]; }
 function badge(p) {
   return (p.actions || []).map(a => a.type === 'lift' ? `⬆${cm(a.mm)}` : a.type === 'wait' ? `⏱${a.ms}` : a.type === 'wall' ? `▮${C.SIDE_VN[a.side][0].toUpperCase()}` :
-    a.type === 'tof' ? `ToF${a.sensor}` : `★${a.id}`).join(' ');
+    a.type === 'tof' ? '⚠ToF' : `★${a.id}`).join(' ');
 }
 let hatch = null;
 function hatchPattern() {
@@ -796,15 +793,6 @@ function draw() {
       if (!seen.has(h.r.name)) { seen.add(h.r.name); rr(s[0], s[1], S.robot.len, S.robot.wid, s[2]); ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2; ctx.setLineDash([5, 3]); ctx.stroke(); ctx.setLineDash([]); }
     }
   }
-  const tofSides = String(S.robot.tofSides || '').split(',').map(s => s.trim());
-  S.points.forEach(p => (p.actions || []).forEach(a => {
-    if (a.type !== 'tof') return;
-    const dir = (p.th + (C.SIDE_ANG[tofSides[a.sensor]] ?? 0)) * C.D2R;
-    const tx = a.wall === 'left' ? 0 : a.wall === 'right' ? W : p.x, ty = a.wall === 'bottom' ? 0 : a.wall === 'top' ? H : p.y;
-    ctx.setLineDash([4, 4]); ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 1.5;
-    const [a1, b1] = P(p.x, p.y), [a2, b2] = P(tx, ty); ctx.beginPath(); ctx.moveTo(a1, b1); ctx.lineTo(a2, b2); ctx.stroke(); ctx.setLineDash([]);
-    arrow(p.x, p.y, dir, 150, '#a855f7', 1.5);
-  }));
   const ptAlpha = mode === 'reg' ? 0.35 : 1; ctx.globalAlpha = ptAlpha;
   S.points.forEach((p, i) => {
     const stop = i === 0 || i === S.points.length - 1 || p.stop;
@@ -950,17 +938,16 @@ function kindSeg(r) {
   return el('div', { class: 'seg' }, mk('none', 'Bỏ qua'), mk('avoid', '⛔ Tránh'), mk('object', '★ Vật'));
 }
 
-const ACTION_TYPES = [['lift', '⬆ Nâng/hạ lift'], ['wait', '⏱ Chờ'], ['wall', '▮ Ép tường (sửa vị trí)'], ['tof', '📏 Sửa vị trí bằng ToF'], ['custom', '★ Hành động riêng']];
+const ACTION_TYPES = [['lift', '⬆ Nâng/hạ lift'], ['wait', '⏱ Chờ'], ['wall', '▮ Ép tường (sửa vị trí)'], ['custom', '★ Hành động riêng']];
 function newAction(type, p) {
   if (type === 'lift') return { type, mm: 200, wait: true };
   if (type === 'wait') return { type, ms: 500 };
   if (type === 'wall') { const wall = C.nearestWall(p, S.field); return { type, wall, side: C.sideFromAngle(C.WALL_NORMAL[wall] - p.th), timeout: 2000 }; }
-  if (type === 'tof') { const sides = String(S.robot.tofSides).split(',').map(s => s.trim()); return { type, sensor: 0, wall: C.wallFacing(p.th + (C.SIDE_ANG[sides[0]] ?? 0)), maxCorr: 150 }; }
   return { type: 'custom', id: 1, param: 0, wait: true, note: '' };
 }
 function actionCard(p, a, k, stopHere) {
   const list = p.actions;
-  const hd = el('div', { class: 'hd' }, el('span', {}, ACTION_TYPES.find(t => t[0] === a.type)[1]), el('span', { class: 'sp' }),
+  const hd = el('div', { class: 'hd' }, el('span', {}, (ACTION_TYPES.find(t => t[0] === a.type) || [0, '📏 ToF (đã bỏ)'])[1]), el('span', { class: 'sp' }),
     el('button', { onclick: () => { if (k > 0) { snapshot(); [list[k - 1], list[k]] = [list[k], list[k - 1]]; changed(true); } } }, '↑'),
     el('button', { onclick: () => { if (k < list.length - 1) { snapshot(); [list[k + 1], list[k]] = [list[k], list[k + 1]]; changed(true); } } }, '↓'),
     el('button', { class: 'del', onclick: () => { snapshot(); list.splice(k, 1); changed(true); } }, '✕'));
@@ -977,9 +964,7 @@ function actionCard(p, a, k, stopHere) {
     body.append(el('button', { onclick: () => { snapshot(); p.th = C.wrap180(C.WALL_NORMAL[a.wall] - C.SIDE_ANG[a.side]); changed(true); } }, 'Đặt θ khớp với tường'));
     body.append(el('div', { class: 'hint' }, 'Xe chạy chậm về phía tường tới khi công tắc chạm, rồi đặt lại toạ độ + góc.'));
   } else if (a.type === 'tof') {
-    const ts = String(S.robot.tofSides).split(',').map((s, j) => [String(j), `#${j} (${C.SIDE_VN[s.trim()] || s})`]);
-    body.append(el('div', { class: 'row' }, sel_('Cảm biến', ts, () => String(a.sensor), v => a.sensor = +v), sel_('Đo tới tường', walls, () => a.wall, v => a.wall = v)));
-    body.append(numCm('Sửa tối đa (cm)', () => a.maxCorr, v => a.maxCorr = v));
+    body.append(el('div', { class: 'warn' }, 'Robot không còn dùng ToF — bấm ✕ để xoá hành động này.'));
   } else {
     body.append(el('div', { class: 'row' }, num('ID hành động', () => a.id, v => a.id = Math.round(v), { step: 1 }), num('Tham số', () => a.param, v => a.param = v)));
     const note = el('input', { placeholder: 'Ghi chú (vd: kẹp vật)' }); note.value = a.note || ''; note.oninput = () => { a.note = note.value; save(); };
@@ -1084,10 +1069,8 @@ function renderPane() {
     pane.append(el('div', { class: 'row' }, numCm('V max (cm/s)', () => r.vmax, v => r.vmax = Math.max(10, v)), numCm('A max (cm/s²)', () => r.amax, v => r.amax = Math.max(10, v))));
     pane.append(el('div', { class: 'row' }, numCm('A ngang khi cua (cm/s²)', () => r.alat, v => r.alat = Math.max(10, v)), num('ω max (°/s)', () => r.wmax, v => r.wmax = Math.max(5, v))));
     pane.append(el('div', { class: 'row' }, num('Gia tốc quay (°/s²)', () => r.walpha, v => r.walpha = Math.max(10, v)), num('Chu kỳ mẫu (ms)', () => r.dt, v => r.dt = Math.min(100, Math.max(5, v)))));
-    pane.append(el('h3', {}, 'Cơ cấu & cảm biến'));
+    pane.append(el('h3', {}, 'Cơ cấu'));
     pane.append(numCm('Tốc độ lift (cm/s, để mô phỏng)', () => r.liftSpeed, v => r.liftSpeed = Math.max(1, v)));
-    const ts = el('input'); ts.value = r.tofSides; ts.onchange = () => { snapshot(); r.tofSides = ts.value; changed(true); };
-    pane.append(el('label', { class: 'f' }, el('span', {}, 'Vị trí ToF theo thứ tự #0,#1,… (front/left/back/right) — khớp TOF_SIDE trong code'), ts));
   } else {
     pane.append(el('div', { class: 'kv' },
       el('span', {}, 'Thời gian ước tính'), el('b', {}, `${plan.T.toFixed(1)} s`),

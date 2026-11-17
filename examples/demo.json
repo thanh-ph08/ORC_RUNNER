@@ -1,12 +1,15 @@
 {
- "v": 1,
+ "v": 2,
  "name": "demo",
  "field": {
-  "w": 3000,
-  "h": 2000,
+  "w": 3640,
+  "h": 3640,
   "grid": 100,
   "snap": 10,
-  "bgOpacity": 0.6
+  "bgOpacity": 0.9,
+  "margin": 30,
+  "wallMargin": 30,
+  "autoSettle": true
  },
  "robot": {
   "len": 400,
@@ -18,8 +21,9 @@
   "walpha": 360,
   "dt": 20,
   "liftSpeed": 250,
-  "tofSides": "front,right"
+  "objGap": 20
  },
+ "regions": [],
  "points": [
   {
    "x": 300,
@@ -68,12 +72,6 @@
      "side": "back",
      "wall": "bottom",
      "timeout": 2500
-    },
-    {
-     "type": "tof",
-     "sensor": 0,
-     "wall": "top",
-     "maxCorr": 150
     }
    ]
   },

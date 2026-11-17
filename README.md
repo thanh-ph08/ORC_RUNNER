@@ -54,7 +54,6 @@ App là một file HTML duy nhất, không cần server, chạy được cả tr
   | ⬆ Lift (cm) | chờ xong hoặc chạy song song | chạy song song |
   | ⏱ Chờ (ms) | ✓ | ✗ |
   | ▮ Ép tường | ✓ (sửa toạ độ + góc) | ✗ |
-  | 📏 ToF | ✓ (sửa 1 toạ độ) | ✗ |
   | ★ Hành động riêng (id, tham số) | ✓ | chạy song song |
 - Nút ▶ phía dưới sân mô phỏng xe chạy. Màu đường đi thể hiện tốc độ: xanh là chậm, đỏ là nhanh.
 - Tab **Xuất**: nút **⬇ Tải path_data.h** rồi chép đè vào `firmware/ORC_Robot/`. Nút **⇋ Lật trái/phải** tạo path cho phía sân đối diện.
@@ -65,8 +64,8 @@ Hệ toạ độ: gốc ở góc dưới-trái sân, x sang phải, y lên trên
 1. Arduino IDE → Preferences → Additional Boards Manager URLs, thêm:
    `https://raw.githubusercontent.com/ricardoquesada/esp32-arduino-lib-builder/master/bluepad32_files/package_esp32_bluepad32_index.json`
 2. Boards Manager: cài **esp32_bluepad32**. Chọn board **ESP32 Dev Module** trong mục *ESP32 + Bluepad32*.
-3. Library Manager: cài **FastAccelStepper**, **SparkFun 9DoF IMU Breakout - ICM 20948**, **Bitcraze PMW3901**, **VL53L1X** (của *Pololu*, không phải bản của ST).
-4. Sửa phần `CẤU HÌNH` đầu file `ORC_Robot.ino` (chân, kích thước robot, ToF, công tắc chạm, lift), rồi nạp.
+3. Library Manager: cài **FastAccelStepper**, **SparkFun 9DoF IMU Breakout - ICM 20948** và **Bitcraze PMW3901**.
+4. Sửa phần `CẤU HÌNH` đầu file `ORC_Robot.ino` (chân, kích thước robot, công tắc chạm, lift), rồi nạp.
 5. Ghép tay cầm: PS4 giữ **Share + PS**, PS5 giữ **Create + PS**.
 
 ### Nút trên tay cầm
