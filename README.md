@@ -35,6 +35,8 @@ App là một file HTML duy nhất, không cần server, chạy được cả tr
 
   Các vùng cùng màu có hàng "tất cả" để đổi loại một lần.
 - Nút **▦ Vùng** trên sân: chạm vào một vùng để chọn và sửa nó, kéo trên sân để vẽ vùng mới.
+- **Viền an toàn quanh tường** (mặc định 3 cm) hiện là dải cam đứt nét. Thân xe (tính theo góc θ) không được lấn vào viền, trừ điểm có hành động ép tường.
+- **Tự lùi điểm vào trong** (bật sẵn): khi thêm, kéo hoặc nhập toạ độ một điểm mà xe chạm viền hay vùng tránh, app tự dời điểm tới vị trí hợp lệ gần nhất. Nút **↩ Lùi tất cả điểm vào trong** dùng sau khi đổi kích thước xe hoặc độ rộng viền.
 - **⛔ Tự né vùng tránh**: app tự chèn điểm đi lướt để đường đi vòng qua các vùng tránh (dùng thuật toán tìm đường A*). Những đoạn vẫn còn chạm vùng tránh sẽ hiện chấm đỏ và cảnh báo trong tab Xuất.
 
 ### Kích thước xe (tab "Robot")

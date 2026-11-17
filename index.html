@@ -156,7 +156,7 @@ const Core = (() => {
   function defaultState() {
     return {
       v: 2, name: 'auto1',
-      field: { w: 3640, h: 3640, grid: 100, snap: 10, bgOpacity: 0.9, margin: 30 },
+      field: { w: 3640, h: 3640, grid: 100, snap: 10, bgOpacity: 0.9, margin: 30, wallMargin: 30, autoSettle: true },
       robot: { len: 400, wid: 400, vmax: 800, amax: 1000, alat: 800, wmax: 180, walpha: 360, dt: 20,
                liftSpeed: 250, tofSides: 'front,right', objGap: 20 },
       regions: [],
@@ -199,21 +199,59 @@ const Core = (() => {
     }
     return null;
   }
+  // Phần nhô ra theo trục x, y của robot khi xoay góc th
+  function extents(robot, thRad) {
+    const c = Math.abs(Math.cos(thRad)), s = Math.abs(Math.sin(thRad));
+    return [robot.len / 2 * c + robot.wid / 2 * s, robot.len / 2 * s + robot.wid / 2 * c];
+  }
+  // Robot có lấn vào viền an toàn quanh tường không (m = độ rộng viền, mm)
+  function borderHit(state, x, y, thRad, m) {
+    const f = state.field, [ex, ey] = extents(state.robot, thRad), t = 0.5;
+    return x - ex < m - t || y - ey < m - t || x + ex > f.w - m + t || y + ey > f.h - m + t;
+  }
+  const BORDER = { name: 'viền sân', kind: 'border' };
+  const hasWallAction = p => (p.actions || []).some(a => a.type === 'wall');
+  // Tư thế hợp lệ: không lấn viền (điểm ép tường chỉ cần nằm trong sân) và không chạm vùng tránh
+  function poseOk(state, x, y, thRad, allowWall) {
+    if (borderHit(state, x, y, thRad, allowWall ? 0 : (state.field.wallMargin || 0))) return false;
+    return !footprintHit(state, x, y, thRad);
+  }
+  // Nếu điểm chạm viền / vùng tránh: dời tới vị trí hợp lệ gần nhất. Trả về true nếu đã dời.
+  function settlePoint(state, p) {
+    const th = p.th * D2R, allow = hasWallAction(p);
+    if (poseOk(state, p.x, p.y, th, allow)) return false;
+    const sn = state.field.snap || 1, step = Math.max(5, sn), q = v => Math.round(v / sn) * sn;
+    for (let r = step; r <= 2000; r += step) {
+      const n = Math.max(8, Math.ceil(2 * Math.PI * r / step));
+      let best = null, bd = Infinity;
+      for (let k = 0; k < n; k++) {
+        const a = 2 * Math.PI * k / n, x = q(p.x + r * Math.cos(a)), y = q(p.y + r * Math.sin(a));
+        const d = Math.hypot(x - p.x, y - p.y);
+        if (d < bd && poseOk(state, x, y, th, allow)) { bd = d; best = { x, y }; }
+      }
+      if (best) { p.x = best.x; p.y = best.y; return true; }
+    }
+    return false;
+  }
+  function settleAll(state) { let n = 0; for (const p of state.points) if (settlePoint(state, p)) n++; return n; }
   function collisions(state, traj) {
-    const out = [];
-    if (!state.regions.some(r => r.kind === 'avoid')) return out;
+    const out = [], m = state.field.wallMargin || 0;
+    const wallPts = state.points.filter(hasWallAction);
+    const nearWallPt = (x, y) => wallPts.some(p => Math.hypot(p.x - x, p.y - y) < Math.hypot(state.robot.len, state.robot.wid) / 2 + 300);
     for (let i = 0; i < traj.length; i += 2) {
       const s = traj[i], r = footprintHit(state, s[0], s[1], s[2]);
       if (r) out.push({ i, r });
+      else if (borderHit(state, s[0], s[1], s[2], nearWallPt(s[0], s[1]) ? 0 : m)) out.push({ i, r: BORDER });
     }
     return out;
   }
   function segmentHits(state, a, b) {
     const L = Math.hypot(b.x - a.x, b.y - a.y), n = Math.max(1, Math.ceil(L / 20));
-    const dth = wrap180(b.th - a.th);
+    const dth = wrap180(b.th - a.th), m = state.field.wallMargin || 0;
     for (let k = 0; k <= n; k++) {
-      const f = k / n;
-      if (footprintHit(state, a.x + f * (b.x - a.x), a.y + f * (b.y - a.y), (a.th + f * dth) * D2R)) return true;
+      const f = k / n, x = a.x + f * (b.x - a.x), y = a.y + f * (b.y - a.y), th = (a.th + f * dth) * D2R;
+      if (footprintHit(state, x, y, th)) return true;
+      if (k > 0 && k < n && borderHit(state, x, y, th, m)) return true;
     }
     return false;
   }
@@ -222,13 +260,13 @@ const Core = (() => {
   function planAround(state, a, b) {
     const f = state.field, r = state.robot, cell = 20;
     const nx = Math.ceil(f.w / cell), ny = Math.ceil(f.h / cell), N = nx * ny;
-    const infl = Math.max(r.len, r.wid) / 2 + (f.margin || 0);
+    const infl = Math.max(r.len, r.wid) / 2 + (f.margin || 0), wInfl = Math.max(r.len, r.wid) / 2 + (f.wallMargin || 0);
     const regs = state.regions.filter(g => g.kind === 'avoid');
     const cost = new Float32Array(N);
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
       const x = (i + 0.5) * cell, y = (j + 0.5) * cell;
       let c = 1;
-      if (x < infl || y < infl || x > f.w - infl || y > f.h - infl) c = 50;
+      if (x < wInfl || y < wInfl || x > f.w - wInfl || y > f.h - wInfl) c = 1000;
       for (const g of regs) if (x > g.x - infl && x < g.x + g.w + infl && y > g.y - infl && y < g.y + g.h + infl) { c = 1000; break; }
       cost[j * nx + i] = c;
     }
@@ -517,17 +555,14 @@ const Core = (() => {
       a = b;
     }
     points.forEach((p, i) => {
-      const r = Math.hypot(robot.len, robot.wid) / 2;
-      if (p.x < 0 || p.y < 0 || p.x > field.w || p.y > field.h) warnings.push(`Điểm #${i} nằm ngoài sân.`);
-      else if (p.x < r * 0.7 || p.y < r * 0.7 || p.x > field.w - r * 0.7 || p.y > field.h - r * 0.7) {
-        if (!(p.actions || []).some(x => x.type === 'wall')) warnings.push(`Điểm #${i} sát tường, robot có thể đụng.`);
-      }
-      const hr = footprintHit(state, p.x, p.y, p.th * D2R);
+      const th = p.th * D2R;
+      if (borderHit(state, p.x, p.y, th, hasWallAction(p) ? 0 : (field.wallMargin || 0))) warnings.push(`Điểm #${i}: robot lấn viền sân.`);
+      const hr = footprintHit(state, p.x, p.y, th);
       if (hr) warnings.push(`Điểm #${i}: robot chạm vùng tránh "${hr.name}".`);
     });
     const hits = collisions(state, traj);
     const byReg = new Map(); for (const h of hits) byReg.set(h.r.name, (byReg.get(h.r.name) || 0) + 1);
-    for (const [nm] of byReg) warnings.push(`Đường đi chạm vùng tránh "${nm}" → bấm "Tự né vùng tránh".`);
+    for (const [nm] of byReg) warnings.push(nm === BORDER.name ? 'Đường đi lấn viền sân → bấm "Tự né" hoặc dời điểm vào trong.' : `Đường đi chạm vùng tránh "${nm}" → bấm "Tự né vùng tránh".`);
     const dt = robot.dt / 1000;
     const schedule = []; let t = 0; let liftH = 0;
     for (const s of steps) {
@@ -617,7 +652,7 @@ const Core = (() => {
 
   return { D2R, R2D, SIDES, SIDE_ANG, SIDE_VN, WALLS, WALL_NORMAL, WALL_VN, ST, cm, wrap180, sideFromAngle, wallFacing,
            nearestWall, sideDist, defaultState, normalize, compile, poseAt, toHeader, mirror, detectRegions,
-           footprintHit, segmentHits, planAround, avoidSegment, avoidAll, approachObject, rectHitsBox };
+           footprintHit, segmentHits, planAround, borderHit, poseOk, settlePoint, settleAll, avoidSegment, avoidAll, approachObject, rectHitsBox };
 })();
 /*CORE-END*/
 </script>
@@ -733,6 +768,12 @@ function draw() {
   for (let y = 0; y <= H; y += g) { ctx.strokeStyle = (Math.round(y) % 500 === 0) ? css('--grid2') : css('--grid'); const [, b] = P(0, y); ctx.beginPath(); ctx.moveTo(x0, b); ctx.lineTo(x1, b); ctx.stroke(); }
   ctx.globalAlpha = 1;
   ctx.strokeStyle = css('--wall'); ctx.lineWidth = 3; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  const wm = (S.field.wallMargin || 0) * view.s;
+  if (wm > 0.5) {
+    ctx.fillStyle = 'rgba(234,88,12,.22)';
+    ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.rect(x0 + wm, y1 - wm, x1 - x0 - 2 * wm, -(y1 - y0 - 2 * wm)); ctx.fill('evenodd');
+    ctx.strokeStyle = 'rgba(234,88,12,.95)'; ctx.lineWidth = 2; ctx.setLineDash([8, 5]); ctx.strokeRect(x0 + wm, y0 + wm, x1 - x0 - 2 * wm, y1 - y0 - 2 * wm); ctx.setLineDash([]);
+  }
   ctx.fillStyle = css('--muted'); ctx.font = '11px system-ui';
   ctx.fillText(`(0,0)   ${cm(W)} × ${cm(H)} cm`, x0 + 2, y1 + 14);
   arrow(0, 0, 0, 0.06 * W, '#ef4444', 2); arrow(0, 0, Math.PI / 2, 0.06 * W, '#22c55e', 2);
@@ -811,6 +852,8 @@ function hitRegion(fx, fy) {
   return best;
 }
 const snap = v => { const s = S.field.snap || 1; return Math.round(v / s) * s; };
+// Tự lùi điểm vào trong nếu chạm viền / vùng tránh
+function settle(p, quiet) { if (!S.field.autoSettle || !p) return false; const moved = C.settlePoint(S, p); if (moved && !quiet) toast('Điểm chạm viền / vùng tránh → đã lùi vào trong'); return moved; }
 cv.addEventListener('pointerdown', e => {
   cv.setPointerCapture(e.pointerId);
   const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
@@ -833,6 +876,7 @@ cv.addEventListener('pointermove', e => {
     const p = S.points[drag.h.i];
     if (drag.h.kind === 'pt') { p.x = snap(fx); p.y = snap(fy); }
     else p.th = C.wrap180(Math.round(Math.atan2(fy - p.y, fx - p.x) * C.R2D / 5) * 5);
+    drag.settled = settle(p, true) || drag.settled;
     plan = C.compile(S); draw(); syncInputs();
   } else { view.ox = drag.vox + (px - drag.sx); view.oy = drag.voy + (py - drag.sy); draw(); }
 });
@@ -851,13 +895,14 @@ cv.addEventListener('pointerup', () => {
     const el2 = document.querySelector('.reg.sel'); if (el2) el2.scrollIntoView({ block: 'nearest' });
     return;
   }
-  if (d.moved) { if (d.h) changed(false); return; }
+  if (d.moved) { if (d.h) { if (d.settled) toast('Điểm chạm viền / vùng tránh → đã lùi vào trong'); changed(false); } return; }
   if (d.h) return;
   if (mode === 'add') {
     const [fx, fy] = F(d.px, d.py);
     snapshot();
     const last = S.points[S.points.length - 1];
     S.points.push({ x: snap(fx), y: snap(fy), th: last ? last.th : 90, stop: true, vmax: 0, actions: [] });
+    settle(S.points[S.points.length - 1]);
     sel = S.points.length - 1; tab = 'pt'; renderTabs(); changed(true);
   } else { sel = -1; renderPane(); draw(); }
 });
@@ -885,6 +930,7 @@ function num(label, get, set, opts = {}) {
   inp.onfocus = () => snapshot();
   inp.oninput = () => { const v = parseFloat(inp.value); if (!isNaN(v)) { set(v); if (opts.fit) view.fitted = false; changed(false); if (opts.fit) resize(); } };
   if (opts.bind) binds.push(() => { if (document.activeElement !== inp) inp.value = get(); });
+  if (opts.after) inp.onchange = () => { if (opts.after()) changed(true); };
   return el('label', { class: 'f' }, el('span', {}, label), inp);
 }
 // ô nhập theo cm, lưu mm
@@ -970,9 +1016,10 @@ function renderPane() {
       el('button', { onclick: () => { sel = Math.max(0, sel - 1); renderPane(); draw(); } }, '◀'),
       el('b', { style: 'align-self:center' }, sel === 0 ? `#0 · Xuất phát` : sel === last ? `#${sel} · Cuối` : `Điểm #${sel}`),
       el('button', { onclick: () => { sel = Math.min(last, sel + 1); renderPane(); draw(); } }, '▶'),
-      el('button', { onclick: () => { snapshot(); const q = S.points[sel + 1]; const np = JSON.parse(JSON.stringify(p)); np.actions = []; if (q) { np.x = snap((p.x + q.x) / 2); np.y = snap((p.y + q.y) / 2); np.stop = false; } else np.x = snap(p.x + 200); S.points.splice(sel + 1, 0, np); sel++; changed(true); } }, '＋ Chèn sau'),
+      el('button', { onclick: () => { snapshot(); const q = S.points[sel + 1]; const np = JSON.parse(JSON.stringify(p)); np.actions = []; if (q) { np.x = snap((p.x + q.x) / 2); np.y = snap((p.y + q.y) / 2); np.stop = false; } else np.x = snap(p.x + 200); settle(np, true); S.points.splice(sel + 1, 0, np); sel++; changed(true); } }, '＋ Chèn sau'),
       el('button', { class: 'del', onclick: () => { snapshot(); S.points.splice(sel, 1); sel = Math.min(sel, S.points.length - 1); changed(true); } }, 'Xoá')));
-    pane.append(el('div', { class: 'row' }, numCm('X (cm)', () => p.x, v => p.x = v, { bind: 1 }), numCm('Y (cm)', () => p.y, v => p.y = v, { bind: 1 }), num('θ (độ)', () => p.th, v => p.th = C.wrap180(v), { bind: 1 })));
+    const af = { bind: 1, after: () => settle(p) };
+    pane.append(el('div', { class: 'row' }, numCm('X (cm)', () => p.x, v => p.x = v, af), numCm('Y (cm)', () => p.y, v => p.y = v, af), num('θ (độ)', () => p.th, v => p.th = C.wrap180(v), af)));
     if (sel !== 0 && sel !== last) pane.append(chk('Dừng tại điểm này (bỏ chọn = đi lướt qua)', () => !!p.stop, v => p.stop = v));
     if (sel > 0) pane.append(numCm(`Tốc độ tối đa đoạn #${sel - 1}→#${sel} (cm/s, 0 = mặc định ${cm(S.robot.vmax)})`, () => p.vmax || 0, v => p.vmax = v));
     // vật & vùng tránh
@@ -981,7 +1028,7 @@ function renderPane() {
     if (objs.length) {
       const pick = el('select'); objs.forEach(([r, i]) => pick.append(el('option', { value: i }, '★ ' + r.name)));
       let best = objs[0][1], bd = Infinity; objs.forEach(([r, i]) => { const d = Math.hypot(r.x + r.w / 2 - p.x, r.y + r.h / 2 - p.y); if (d < bd) { bd = d; best = i; } }); pick.value = best;
-      extra.append(el('div', { class: 'row', style: 'width:100%' }, pick, el('button', { onclick: () => { snapshot(); C.approachObject(S, p, S.regions[+pick.value]); changed(true); } }, '🎯 Đặt điểm trước vật')));
+      extra.append(el('div', { class: 'row', style: 'width:100%' }, pick, el('button', { onclick: () => { snapshot(); C.approachObject(S, p, S.regions[+pick.value]); settle(p); changed(true); } }, '🎯 Đặt điểm trước vật')));
     }
     if (sel > 0 && S.regions.some(r => r.kind === 'avoid')) extra.append(el('button', { onclick: () => { snapshot(); const n = C.avoidSegment(S, sel - 1); if (n > 0) { sel += n; toast(`Đã chèn ${n} điểm để né`); } else if (n === 0) toast('Đoạn này không chạm vùng tránh'); else toast('Không tìm được đường né'); changed(true); } }, `⛔ Né vùng tránh đoạn #${sel - 1}→#${sel}`));
     if (extra.childNodes.length) pane.append(extra);
@@ -998,8 +1045,13 @@ function renderPane() {
     pane.append(el('div', { class: 'hint' }, 'PDF: kích thước sân lấy theo khổ giấy (VD 364×364 cm). Ảnh: đặt kích thước sân bên dưới trước. App tự nhận các ô màu đặc thành vùng.'));
     pane.append(el('div', { class: 'row' }, numCm('Sân rộng (cm)', () => f.w, v => f.w = v, { fit: 1 }), numCm('Sân cao (cm)', () => f.h, v => f.h = v, { fit: 1 })));
     pane.append(el('div', { class: 'row' }, numCm('Lưới (cm)', () => f.grid, v => f.grid = Math.max(10, v)), numCm('Bắt điểm (cm)', () => f.snap, v => f.snap = Math.max(1, v)), num('Độ đậm nền', () => f.bgOpacity ?? 0.9, v => f.bgOpacity = Math.min(1, Math.max(0, v)))));
-    pane.append(numCm('Khoảng cách an toàn quanh vùng tránh (cm)', () => f.margin || 0, v => f.margin = Math.max(0, v)));
+    pane.append(el('div', { class: 'row' },
+      numCm('Viền an toàn quanh tường (cm)', () => f.wallMargin || 0, v => f.wallMargin = Math.max(0, v), { after: () => S.field.autoSettle && C.settleAll(S) > 0 }),
+      numCm('Khoảng an toàn quanh vùng tránh (cm)', () => f.margin || 0, v => f.margin = Math.max(0, v), { after: () => S.field.autoSettle && C.settleAll(S) > 0 })));
+    pane.append(chk('Tự lùi điểm vào trong khi chạm viền / vùng tránh', () => f.autoSettle !== false, v => f.autoSettle = v));
+    pane.append(el('div', { class: 'hint' }, 'Viền là đường cam đứt nét trên sân: thân xe không được vượt qua (trừ điểm có hành động ép tường).'));
     pane.append(el('div', { class: 'btns' },
+      el('button', { onclick: () => { snapshot(); const n = C.settleAll(S); toast(n ? `Đã lùi ${n} điểm vào trong` : 'Không có điểm nào chạm viền / vùng tránh'); changed(true); } }, '↩ Lùi tất cả điểm vào trong'),
       el('button', { onclick: () => { snapshot(); const r = C.avoidAll(S); toast(r.added ? `Đã chèn ${r.added} điểm để né` : (r.failed ? 'Không tìm được đường né' : 'Path không chạm vùng tránh')); changed(true); } }, '⛔ Tự né vùng tránh (cả path)'),
       el('button', { onclick: () => { if (S.field.bg) { snapshot(); delete S.field.bg; setBg(); changed(false); } } }, 'Bỏ ảnh nền')));
     pane.append(el('h3', {}, `Vùng trên sa bàn (${S.regions.length})`));
@@ -1024,7 +1076,8 @@ function renderPane() {
   } else if (tab === 'set') {
     const r = S.robot;
     pane.append(el('h3', {}, 'Kích thước xe'));
-    pane.append(el('div', { class: 'row' }, numCm('Dài (cm, trước–sau)', () => r.len, v => r.len = Math.max(5, v)), numCm('Rộng (cm, trái–phải)', () => r.wid, v => r.wid = Math.max(5, v))));
+    const sa = { after: () => S.field.autoSettle && C.settleAll(S) > 0 };
+    pane.append(el('div', { class: 'row' }, numCm('Dài (cm, trước–sau)', () => r.len, v => r.len = Math.max(5, v), sa), numCm('Rộng (cm, trái–phải)', () => r.wid, v => r.wid = Math.max(5, v), sa)));
     pane.append(el('div', { class: 'hint' }, 'Tính cả cản/khung nhô ra. Phải khớp ROBOT_LEN_MM / ROBOT_WID_MM trong ORC_Robot.ino (đơn vị mm = cm × 10).'));
     pane.append(numCm('Khoảng hở khi dừng trước vật (cm)', () => r.objGap, v => r.objGap = Math.max(0, v)));
     pane.append(el('h3', {}, 'Chuyển động'));
