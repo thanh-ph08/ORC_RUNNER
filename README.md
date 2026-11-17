@@ -5,6 +5,7 @@ App web để vẽ đường chạy tự động cho robot mecanum ORC. Code ESP
 ```
 index.html                  ← app (deploy lên GitHub Pages)
 examples/demo.json          ← path mẫu (mở bằng nút "📂 Mở JSON")
+examples/orc-2026-sa-ban.json ← sa bàn ORC 2026 (364×364 cm) đã tách vùng
 firmware/ORC_Robot/
   ORC_Robot.ino             ← FILE CHÍNH: phần cứng + chạy thủ công
   Auto.ino                  ← FILE PHỤ: chạy tự động
@@ -19,22 +20,44 @@ firmware/ORC_Robot/
 App là một file HTML duy nhất, không cần server, chạy được cả trên điện thoại. Path tự lưu trong trình duyệt. Muốn chuyển sang máy khác thì dùng "Lưu JSON".
 
 ## 2. Dùng app
-- **＋ Thêm điểm**: chạm lên sân để thêm điểm tiếp theo. Điểm #0 là vị trí xuất phát.
-- Chạm vào một điểm để sửa X, Y, θ. Kéo điểm để di chuyển, kéo nút cam **θ** để xoay hướng.
+**Mọi kích thước trong app tính bằng cm.** File `path_data.h` vẫn xuất ra mm cho firmware.
+
+### Sa bàn (tab "Sa bàn")
+- **📄 Nhập file sa bàn (PDF / ảnh)**
+  - Với file PDF in sa bàn, app tự lấy kích thước sân theo khổ giấy (VD 364 × 364 cm), dùng hình làm nền, và tự nhận các ô màu đặc thành **vùng**.
+  - Với ảnh PNG/JPG, nhập kích thước sân trước rồi mới nhập ảnh.
+  - File PDF rất nặng (ảnh 8000 × 8000) nên nhập trên máy tính sẽ chắc ăn hơn điện thoại.
+- **Sa bàn ORC 2026 có sẵn**: nạp ngay sa bàn Explorer Offline 2026–2027 đã tách sẵn 34 vùng (file `examples/orc-2026-sa-ban.json`).
+- Mỗi vùng chọn một trong ba loại:
+  - **Bỏ qua**: không làm gì.
+  - **⛔ Tránh**: xe không được đi vào, tính cả *khoảng cách an toàn* xung quanh.
+  - **★ Vật**: mục tiêu.
+
+  Các vùng cùng màu có hàng "tất cả" để đổi loại một lần.
+- Nút **▦ Vùng** trên sân: chạm vào một vùng để chọn và sửa nó, kéo trên sân để vẽ vùng mới.
+- **⛔ Tự né vùng tránh**: app tự chèn điểm đi lướt để đường đi vòng qua các vùng tránh (dùng thuật toán tìm đường A*). Những đoạn vẫn còn chạm vùng tránh sẽ hiện chấm đỏ và cảnh báo trong tab Xuất.
+
+### Kích thước xe (tab "Robot")
+- Nhập dài × rộng xe (cm), tính cả phần khung nhô ra. App dùng kích thước này để kiểm tra va chạm và đặt điểm trước vật.
+- Hai số này phải khớp `ROBOT_LEN_MM` / `ROBOT_WID_MM` trong `ORC_Robot.ino` (mm = cm × 10).
+
+### Điểm & hành động (tab "Điểm")
+- **＋ Điểm**: chạm lên sân để thêm điểm tiếp theo. Điểm #0 là vị trí xuất phát.
+- Kéo điểm để di chuyển, kéo nút cam **θ** để xoay hướng xe.
+- **🎯 Đặt điểm trước vật**: đặt điểm sát một vật đã chọn, mặt trước xe quay vào vật, chừa khoảng hở như cài trong tab Robot.
 - **Dừng tại điểm**: nếu bỏ chọn, xe đi lướt qua điểm đó theo đường cong.
 - **Hành động** tại mỗi điểm:
   | Hành động | Ở điểm Dừng | Ở điểm đi qua |
   |---|---|---|
-  | ⬆ Lift (mm) | chờ xong hoặc chạy song song | chạy song song |
+  | ⬆ Lift (cm) | chờ xong hoặc chạy song song | chạy song song |
   | ⏱ Chờ (ms) | ✓ | ✗ |
   | ▮ Ép tường | ✓ (sửa toạ độ + góc) | ✗ |
   | 📏 ToF | ✓ (sửa 1 toạ độ) | ✗ |
   | ★ Hành động riêng (id, tham số) | ✓ | chạy song song |
 - Nút ▶ phía dưới sân mô phỏng xe chạy. Màu đường đi thể hiện tốc độ: xanh là chậm, đỏ là nhanh.
-- Tab **Cài đặt**: kích thước sân, robot, tốc độ/gia tốc tối đa. Có thể thêm ảnh nền sân để đặt điểm cho chính xác.
 - Tab **Xuất**: nút **⬇ Tải path_data.h** rồi chép đè vào `firmware/ORC_Robot/`. Nút **⇋ Lật trái/phải** tạo path cho phía sân đối diện.
 
-Hệ toạ độ: gốc ở góc dưới-trái sân, x sang phải, y lên trên (mm). θ = 0 là hướng +x, chiều dương ngược chiều kim đồng hồ.
+Hệ toạ độ: gốc ở góc dưới-trái sân, x sang phải, y lên trên. θ = 0 là hướng +x, chiều dương ngược chiều kim đồng hồ.
 
 ## 3. Nạp code ESP32
 1. Arduino IDE → Preferences → Additional Boards Manager URLs, thêm:

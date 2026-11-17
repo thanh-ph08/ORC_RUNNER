@@ -24,15 +24,15 @@ header input{flex:1;min-width:60px;max-width:220px}
 main{display:flex;height:calc(100% - 50px)}
 #cwrap{position:relative;flex:1;min-width:0;touch-action:none}
 canvas{display:block;width:100%;height:100%}
-aside{width:380px;max-width:100%;background:var(--panel);border-left:1px solid var(--line);
+aside{width:390px;max-width:100%;background:var(--panel);border-left:1px solid var(--line);
   display:flex;flex-direction:column;min-height:0}
 @media (max-width:820px){
   main{flex-direction:column;height:auto}
-  #cwrap{height:min(58vh, calc(100vw * 0.72 + 120px));flex:none}
+  #cwrap{height:min(62vh, calc(100vw + 110px));flex:none}
   aside{width:100%;border-left:none;border-top:1px solid var(--line)}
 }
 .tabs{display:flex;border-bottom:1px solid var(--line)}
-.tabs button{flex:1;border:0;background:none;padding:10px;font-weight:600;color:var(--muted);border-radius:0}
+.tabs button{flex:1;border:0;background:none;padding:10px 4px;font-weight:600;color:var(--muted);border-radius:0}
 .tabs button.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
 .pane{padding:12px;overflow:auto;flex:1}
 button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);
@@ -62,15 +62,27 @@ pre{font-size:11px;background:var(--bg);border:1px solid var(--line);border-radi
 .ov{position:absolute;display:flex;gap:6px;align-items:center}
 .ov button{background:var(--panel);box-shadow:0 1px 3px rgba(0,0,0,.15)}
 .ov button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
-#tl{left:8px;top:8px}
+#tl{left:8px;top:8px;flex-wrap:wrap;right:130px}
 #tr{right:8px;top:8px}
 #sim{left:8px;right:8px;bottom:8px;background:var(--panel);border:1px solid var(--line);
   border-radius:10px;padding:6px 8px;box-shadow:0 1px 3px rgba(0,0,0,.15)}
 #sim input{flex:1;padding:0}
-#simlbl{font-size:12px;color:var(--muted);white-space:nowrap;min-width:92px;text-align:right}
+#simlbl{font-size:12px;color:var(--muted);white-space:nowrap;min-width:92px;text-align:right;overflow:hidden;text-overflow:ellipsis;max-width:55%}
 #coord{position:absolute;left:8px;bottom:58px;font-size:12px;color:var(--muted);pointer-events:none}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:13px}
 .kv b{font-weight:600}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{flex:1;border:0;border-radius:0;padding:6px 4px;font-size:13px;white-space:nowrap}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on.k-none{background:#6b7280;color:#fff}
+.seg button.on.k-avoid{background:#dc2626;color:#fff}
+.seg button.on.k-object{background:#16a34a;color:#fff}
+.reg{display:flex;align-items:center;gap:6px;margin:4px 0}
+.reg .sw{width:16px;height:16px;border-radius:4px;border:1px solid var(--line);flex:none}
+.reg .nm{flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.reg .seg{flex:none;width:186px}
+.reg.sel{outline:2px solid #f59e0b;border-radius:6px}
+#busy{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:30;color:#fff;font-weight:600}
 </style>
 </head>
 <body>
@@ -84,8 +96,9 @@ pre{font-size:11px;background:var(--bg);border:1px solid var(--line);border-radi
   <div id="cwrap">
     <canvas id="cv"></canvas>
     <div class="ov" id="tl">
-      <button id="mAdd" class="on">＋ Thêm điểm</button>
-      <button id="mSel">✋ Chọn/kéo</button>
+      <button id="mAdd" class="on">＋ Điểm</button>
+      <button id="mSel">✋ Kéo</button>
+      <button id="mReg">▦ Vùng</button>
     </div>
     <div class="ov" id="tr">
       <button id="zIn">＋</button><button id="zOut">－</button><button id="zFit">⤢</button>
@@ -100,14 +113,16 @@ pre{font-size:11px;background:var(--bg);border:1px solid var(--line);border-radi
   <aside>
     <div class="tabs">
       <button data-t="pt" class="on">Điểm</button>
-      <button data-t="set">Cài đặt</button>
+      <button data-t="map">Sa bàn</button>
+      <button data-t="set">Robot</button>
       <button data-t="exp">Xuất</button>
     </div>
     <div class="pane" id="pane"></div>
   </aside>
 </main>
+<div id="busy">Đang xử lý…</div>
 <input type="file" id="fJson" accept=".json,application/json" hidden>
-<input type="file" id="fImg" accept="image/*" hidden>
+<input type="file" id="fMap" accept="application/pdf,.pdf,image/*" hidden>
 
 <script>
 /*CORE-START*/
@@ -121,6 +136,7 @@ const Core = (() => {
   const WALL_VN = { left: 'trái (x=0)', right: 'phải (x=W)', bottom: 'dưới (y=0)', top: 'trên (y=H)' };
   const ST = { FOLLOW: 0, LIFT: 1, WAIT: 2, WALL: 3, TOF: 4, CUSTOM: 5 };
   const SF_ASYNC = 1, SF_CONTINUE = 2;
+  const cm = mm => Math.round(mm) / 10;
 
   function wrap180(a) { return ((a + 180) % 360 + 360) % 360 - 180; }
   function nearestOf(list, angOf, ang) {
@@ -136,21 +152,215 @@ const Core = (() => {
   }
   function sideDist(side, robot) { return (side === 'front' || side === 'back') ? robot.len / 2 : robot.wid / 2; }
 
+  // Đơn vị lưu bên trong: mm (firmware dùng mm). Giao diện hiển thị cm.
   function defaultState() {
     return {
-      v: 1, name: 'auto1',
-      field: { w: 3000, h: 2000, grid: 100, snap: 10, bgOpacity: 0.6 },
+      v: 2, name: 'auto1',
+      field: { w: 3640, h: 3640, grid: 100, snap: 10, bgOpacity: 0.9, margin: 30 },
       robot: { len: 400, wid: 400, vmax: 800, amax: 1000, alat: 800, wmax: 180, walpha: 360, dt: 20,
-               liftSpeed: 250, tofSides: 'front,right' },
+               liftSpeed: 250, tofSides: 'front,right', objGap: 20 },
+      regions: [],
       points: [
-        { x: 300, y: 300, th: 90, stop: true, vmax: 0, actions: [] },
-        { x: 300, y: 1200, th: 90, stop: false, vmax: 0, actions: [{ type: 'lift', mm: 200, wait: false }] },
-        { x: 1200, y: 1500, th: 0, stop: true, vmax: 0, actions: [{ type: 'wait', ms: 500 }] },
+        { x: 400, y: 400, th: 90, stop: true, vmax: 0, actions: [] },
+        { x: 400, y: 1400, th: 90, stop: true, vmax: 0, actions: [] },
       ],
     };
   }
+  function normalize(s) {
+    const d = defaultState();
+    s.field = Object.assign({}, d.field, s.field || {});
+    s.robot = Object.assign({}, d.robot, s.robot || {});
+    s.regions = Array.isArray(s.regions) ? s.regions : [];
+    s.points = Array.isArray(s.points) ? s.points : d.points;
+    for (const p of s.points) { p.actions = p.actions || []; p.vmax = p.vmax || 0; }
+    return s;
+  }
 
-  // Centripetal Catmull-Rom (Barry-Goldman)
+  // ---------- hình học / va chạm ----------
+  // Hình chữ nhật xoay (tâm cx,cy; nửa dài hl theo hướng th; nửa rộng hw) có chạm hộp b (x,y,w,h) nới thêm m?
+  function rectHitsBox(cx, cy, hl, hw, th, b, m) {
+    const bx = b.x - m, by = b.y - m, bw = b.w + 2 * m, bh = b.h + 2 * m;
+    const c = Math.cos(th), s = Math.sin(th);
+    const A = [[hl, hw], [-hl, hw], [-hl, -hw], [hl, -hw]].map(([a, q]) => [cx + a * c - q * s, cy + a * s + q * c]);
+    const B = [[bx, by], [bx + bw, by], [bx + bw, by + bh], [bx, by + bh]];
+    for (const [ax, ay] of [[1, 0], [0, 1], [c, s], [-s, c]]) {
+      let a0 = 1e18, a1 = -1e18, b0 = 1e18, b1 = -1e18;
+      for (const [x, y] of A) { const p = x * ax + y * ay; if (p < a0) a0 = p; if (p > a1) a1 = p; }
+      for (const [x, y] of B) { const p = x * ax + y * ay; if (p < b0) b0 = p; if (p > b1) b1 = p; }
+      if (a1 <= b0 || b1 <= a0) return false;
+    }
+    return true;
+  }
+  function footprintHit(state, x, y, thRad) {
+    const m = state.field.margin || 0;
+    for (const r of state.regions) {
+      if (r.kind !== 'avoid') continue;
+      if (rectHitsBox(x, y, state.robot.len / 2, state.robot.wid / 2, thRad, r, m)) return r;
+    }
+    return null;
+  }
+  function collisions(state, traj) {
+    const out = [];
+    if (!state.regions.some(r => r.kind === 'avoid')) return out;
+    for (let i = 0; i < traj.length; i += 2) {
+      const s = traj[i], r = footprintHit(state, s[0], s[1], s[2]);
+      if (r) out.push({ i, r });
+    }
+    return out;
+  }
+  function segmentHits(state, a, b) {
+    const L = Math.hypot(b.x - a.x, b.y - a.y), n = Math.max(1, Math.ceil(L / 20));
+    const dth = wrap180(b.th - a.th);
+    for (let k = 0; k <= n; k++) {
+      const f = k / n;
+      if (footprintHit(state, a.x + f * (b.x - a.x), a.y + f * (b.y - a.y), (a.th + f * dth) * D2R)) return true;
+    }
+    return false;
+  }
+
+  // A* trên lưới 2 cm: tìm đường từ a tới b né vùng tránh, trả về các điểm trung gian
+  function planAround(state, a, b) {
+    const f = state.field, r = state.robot, cell = 20;
+    const nx = Math.ceil(f.w / cell), ny = Math.ceil(f.h / cell), N = nx * ny;
+    const infl = Math.max(r.len, r.wid) / 2 + (f.margin || 0);
+    const regs = state.regions.filter(g => g.kind === 'avoid');
+    const cost = new Float32Array(N);
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const x = (i + 0.5) * cell, y = (j + 0.5) * cell;
+      let c = 1;
+      if (x < infl || y < infl || x > f.w - infl || y > f.h - infl) c = 50;
+      for (const g of regs) if (x > g.x - infl && x < g.x + g.w + infl && y > g.y - infl && y < g.y + g.h + infl) { c = 1000; break; }
+      cost[j * nx + i] = c;
+    }
+    const cl = (v, n) => Math.min(n - 1, Math.max(0, Math.floor(v / cell)));
+    const idx = (x, y) => cl(y, ny) * nx + cl(x, nx);
+    const s = idx(a.x, a.y), t = idx(b.x, b.y);
+    const g = new Float64Array(N).fill(Infinity), came = new Int32Array(N).fill(-1), closed = new Uint8Array(N);
+    const tx = t % nx, ty = (t / nx) | 0;
+    const hfun = k => { const dx = Math.abs(k % nx - tx), dy = Math.abs(((k / nx) | 0) - ty); return (dx + dy) + (Math.SQRT2 - 2) * Math.min(dx, dy); };
+    const heap = [], hk = [];
+    const push = (k, pr) => { heap.push(pr); hk.push(k); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p] <= heap[i]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; [hk[p], hk[i]] = [hk[i], hk[p]]; i = p; } };
+    const pop = () => { const k = hk[0]; const lp = heap.pop(), lk = hk.pop(); if (heap.length) { heap[0] = lp; hk[0] = lk; let i = 0; for (;;) { const l = 2 * i + 1, r2 = l + 1; let m = i; if (l < heap.length && heap[l] < heap[m]) m = l; if (r2 < heap.length && heap[r2] < heap[m]) m = r2; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; [hk[m], hk[i]] = [hk[i], hk[m]]; i = m; } } return k; };
+    g[s] = 0; push(s, hfun(s));
+    const D = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]];
+    while (heap.length) {
+      const k = pop(); if (closed[k]) continue; closed[k] = 1; if (k === t) break;
+      const kx = k % nx, ky = (k / nx) | 0;
+      for (const [dx, dy, w] of D) {
+        const x2 = kx + dx, y2 = ky + dy; if (x2 < 0 || y2 < 0 || x2 >= nx || y2 >= ny) continue;
+        const k2 = y2 * nx + x2; if (closed[k2]) continue;
+        const ng = g[k] + w * (cost[k] + cost[k2]) / 2;
+        if (ng < g[k2]) { g[k2] = ng; came[k2] = k; push(k2, ng + hfun(k2)); }
+      }
+    }
+    if (!closed[t]) return null;
+    const cells = []; for (let k = t; k !== -1; k = came[k]) cells.push(k); cells.reverse();
+    const pts = cells.map(k => ({ x: (k % nx + 0.5) * cell, y: (((k / nx) | 0) + 0.5) * cell, c: cost[k] }));
+    pts[0] = { x: a.x, y: a.y, c: cost[s] }; pts[pts.length - 1] = { x: b.x, y: b.y, c: cost[t] };
+    // chỉ cho phép đi qua ô "đắt" khi ở sát điểm đầu/cuối (điểm đặt sát vật cản)
+    const near = 1.5 * infl, A0 = pts[0], B0 = pts[pts.length - 1];
+    const allowed = (x, y) => Math.max(1, Math.hypot(x - A0.x, y - A0.y) < near ? A0.c : 1, Math.hypot(x - B0.x, y - B0.y) < near ? B0.c : 1);
+    const los = (p, q) => {
+      const L = Math.hypot(q.x - p.x, q.y - p.y), n = Math.max(1, Math.ceil(L / (cell / 2)));
+      for (let k = 0; k <= n; k++) { const x = p.x + (q.x - p.x) * k / n, y = p.y + (q.y - p.y) * k / n; if (cost[idx(x, y)] > allowed(x, y)) return false; }
+      return true;
+    };
+    const out = [pts[0]]; let i = 0;
+    while (i < pts.length - 1) { let j = pts.length - 1; while (j > i + 1 && !los(pts[i], pts[j])) j--; out.push(pts[j]); i = j; }
+    let mids = out.slice(1, -1);
+    // gộp các điểm trung gian quá sát nhau (< 8 cm) để đường cong mượt
+    const merged = [];
+    for (const q of mids) { const l = merged[merged.length - 1]; if (l && Math.hypot(q.x - l.x, q.y - l.y) < 80) { l.x = (l.x + q.x) / 2; l.y = (l.y + q.y) / 2; } else merged.push({ ...q }); }
+    mids = merged;
+    const chain = [a, ...mids, b];
+    const total = chain.reduce((acc, p, k) => k ? acc + Math.hypot(p.x - chain[k - 1].x, p.y - chain[k - 1].y) : 0, 0) || 1;
+    let run = 0; const dth = wrap180(b.th - a.th);
+    return mids.map((p, k) => {
+      run += Math.hypot(p.x - chain[k].x, p.y - chain[k].y);
+      return { x: Math.round(p.x), y: Math.round(p.y), th: Math.round(wrap180(a.th + dth * run / total)), stop: false, vmax: 0, actions: [] };
+    });
+  }
+  // Né cho đoạn i -> i+1. Trả về số điểm chèn thêm (-1 nếu không tìm được)
+  function avoidSegment(state, i) {
+    const a = state.points[i], b = state.points[i + 1];
+    if (!a || !b || !segmentHits(state, a, b)) return 0;
+    const mids = planAround(state, a, b);
+    if (!mids) return -1;
+    state.points.splice(i + 1, 0, ...mids);
+    return mids.length;
+  }
+  function avoidAll(state) {
+    let added = 0, failed = 0;
+    for (let i = state.points.length - 2; i >= 0; i--) { const n = avoidSegment(state, i); if (n > 0) added += n; if (n < 0) failed++; }
+    return { added, failed };
+  }
+  // Đặt điểm p trước vật reg (mặt trước robot hướng vào vật)
+  function approachObject(state, p, reg) {
+    const cx = reg.x + reg.w / 2, cy = reg.y + reg.h / 2, dx = p.x - cx, dy = p.y - cy;
+    let dir;
+    if (Math.abs(dx) / reg.w > Math.abs(dy) / reg.h) dir = dx >= 0 ? 0 : 180; else dir = dy >= 0 ? 90 : -90;
+    const half = (dir === 0 || dir === 180) ? reg.w / 2 : reg.h / 2;
+    const d = half + state.robot.len / 2 + (state.robot.objGap || 0);
+    p.x = Math.round(cx + d * Math.cos(dir * D2R)); p.y = Math.round(cy + d * Math.sin(dir * D2R)); p.th = wrap180(dir + 180);
+  }
+
+  // ---------- nhận vùng màu từ ảnh sa bàn ----------
+  function colorName(r, g, b) {
+    const mx = Math.max(r, g, b) / 255, mn = Math.min(r, g, b) / 255, l = (mx + mn) / 2, d = mx - mn;
+    const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+    if (s < 0.18) return l < 0.25 ? 'Đen' : l > 0.95 ? 'Trắng' : l > 0.75 ? 'Xám nhạt' : 'Xám';
+    let h; const R = r / 255, G = g / 255, B = b / 255;
+    if (mx === R) h = 60 * (((G - B) / d) % 6); else if (mx === G) h = 60 * ((B - R) / d + 2); else h = 60 * ((R - G) / d + 4);
+    if (h < 0) h += 360;
+    if (h < 15 || h >= 345) return 'Đỏ'; if (h < 32) return 'Cam'; if (h < 50) return 'Vàng cam'; if (h < 70) return 'Vàng'; if (h < 165) return 'Xanh lá';
+    if (h < 200) return 'Xanh ngọc'; if (h < 255) return 'Xanh dương'; if (h < 290) return 'Tím'; return 'Hồng';
+  }
+  // img: {width,height,data} phủ toàn sân W×H (mm). Trả về các hình chữ nhật màu đặc.
+  function detectRegions(img, W, H) {
+    const w = img.width, h = img.height, d = img.data, n = w * h, sx = W / w, sy = H / h;
+    const hist = new Map();
+    for (let i = 0; i < n; i += 3) { const o = i * 4; if (d[o + 3] < 128) continue; const k = ((d[o] >> 4) << 8) | ((d[o + 1] >> 4) << 4) | (d[o + 2] >> 4); hist.set(k, (hist.get(k) || 0) + 1); }
+    let bgk = 0, bc = -1; for (const [k, c] of hist) if (c > bc) { bc = c; bgk = k; }
+    const bg = [((bgk >> 8) & 15) * 16 + 8, ((bgk >> 4) & 15) * 16 + 8, (bgk & 15) * 16 + 8];
+    const dist = (o, c) => Math.abs(d[o] - c[0]) + Math.abs(d[o + 1] - c[1]) + Math.abs(d[o + 2] - c[2]);
+    const lab = new Int32Array(n).fill(-1);
+    for (let i = 0; i < n; i++) { const o = i * 4; if (d[o + 3] < 128 || dist(o, bg) < 60) lab[i] = -2; }
+    const stack = new Int32Array(n); const out = []; let id = 0;
+    for (let i = 0; i < n; i++) {
+      if (lab[i] !== -1) continue;
+      const seed = [d[i * 4], d[i * 4 + 1], d[i * 4 + 2]];
+      let sp = 0; stack[sp++] = i; lab[i] = id;
+      let cnt = 0, x0 = w, y0 = h, x1 = -1, y1 = -1, sr = 0, sg = 0, sb = 0;
+      while (sp) {
+        const p = stack[--sp], x = p % w, y = (p / w) | 0, q = p * 4;
+        cnt++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        sr += d[q]; sg += d[q + 1]; sb += d[q + 2];
+        if (x > 0 && lab[p - 1] === -1 && dist((p - 1) * 4, seed) < 70) { lab[p - 1] = id; stack[sp++] = p - 1; }
+        if (x < w - 1 && lab[p + 1] === -1 && dist((p + 1) * 4, seed) < 70) { lab[p + 1] = id; stack[sp++] = p + 1; }
+        if (y > 0 && lab[p - w] === -1 && dist((p - w) * 4, seed) < 70) { lab[p - w] = id; stack[sp++] = p - w; }
+        if (y < h - 1 && lab[p + w] === -1 && dist((p + w) * 4, seed) < 70) { lab[p + w] = id; stack[sp++] = p + w; }
+      }
+      id++;
+      const bw = x1 - x0 + 1, bh = y1 - y0 + 1, fill = cnt / (bw * bh), wmm = bw * sx, hmm = bh * sy;
+      if (Math.min(wmm, hmm) < 30 || wmm * hmm > 0.3 * W * H) continue;
+      if (fill < 0.85) {
+        // ô có lỗ bên trong (VD khung xám bao ô cam): đo độ phủ theo hàng và cột
+        let rs = 0, cs = 0; const cid = id - 1;
+        for (let y = y0; y <= y1; y++) { let a = -1, b = -1; for (let x = x0; x <= x1; x++) if (lab[y * w + x] === cid) { if (a < 0) a = x; b = x; } if (a >= 0) rs += b - a + 1; }
+        for (let x = x0; x <= x1; x++) { let a = -1, b = -1; for (let y = y0; y <= y1; y++) if (lab[y * w + x] === cid) { if (a < 0) a = y; b = y; } if (a >= 0) cs += b - a + 1; }
+        if (rs / (bw * bh) < 0.97 || cs / (bw * bh) < 0.97) continue;
+      }
+      const r = sr / cnt, g = sg / cnt, b = sb / cnt;
+      out.push({ x: Math.round(x0 * sx), y: Math.round(H - (y1 + 1) * sy), w: Math.round(wmm), h: Math.round(hmm),
+                 color: '#' + [r, g, b].map(v => Math.round(v).toString(16).padStart(2, '0')).join(''), cname: colorName(r, g, b) });
+    }
+    out.sort((a, b) => (b.y + b.h / 2) - (a.y + a.h / 2) || (a.x - b.x));
+    const cnt = {};
+    for (const r of out) { cnt[r.cname] = (cnt[r.cname] || 0) + 1; r.name = `${r.cname} ${cnt[r.cname]}`; r.kind = 'none'; delete r.cname; }
+    return out;
+  }
+
+  // ---------- quỹ đạo ----------
   function cr(p0, p1, p2, p3, u) {
     const a = 0.5, eps = 1e-3;
     const k = (P, Q) => Math.max(Math.pow(Math.hypot(Q.x - P.x, Q.y - P.y), a), eps);
@@ -161,8 +371,13 @@ const Core = (() => {
     const B1 = L(A1, A2, t0, t2), B2 = L(A2, A3, t1, t3);
     return L(B1, B2, t1, t2);
   }
-
-  // Build one chain (stop -> ... -> stop). Returns samples [x,y,th,vx,vy,w] at dt and knot sample indexes.
+  function sampleTimes(T, dt) {
+    const out = [];
+    for (let n = 0; n * dt < T - 1e-6; n++) out.push(n * dt);
+    out.push(T);
+    if (out.length < 2) out.unshift(0);
+    return out;
+  }
   function buildChain(pts, thU, segV, robot) {
     const dt = robot.dt / 1000;
     const m = pts.length;
@@ -183,31 +398,18 @@ const Core = (() => {
     }
     const N = xs.length;
     const dthds = [];
-    for (let j = 0; j < m - 1; j++) {
-      const len = knotS[j + 1] - knotS[j];
-      dthds.push(len > 1e-6 ? (thU[j + 1] - thU[j]) / len : 0);
-    }
-    const thAt = (s, j) => {
-      const len = knotS[j + 1] - knotS[j];
-      const f = len > 1e-9 ? Math.min(1, Math.max(0, (s - knotS[j]) / len)) : 1;
-      return thU[j] + f * (thU[j + 1] - thU[j]);
-    };
-    // curvature
+    for (let j = 0; j < m - 1; j++) { const len = knotS[j + 1] - knotS[j]; dthds.push(len > 1e-6 ? (thU[j + 1] - thU[j]) / len : 0); }
+    const thAt = (s, j) => { const len = knotS[j + 1] - knotS[j]; const f = len > 1e-9 ? Math.min(1, Math.max(0, (s - knotS[j]) / len)) : 1; return thU[j] + f * (thU[j + 1] - thU[j]); };
     const kap = new Array(N).fill(0);
     for (let i = 1; i < N - 1; i++) {
       const ax = xs[i] - xs[i - 1], ay = ys[i] - ys[i - 1], bx = xs[i + 1] - xs[i], by = ys[i + 1] - ys[i];
       const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
       if (la < 1e-6 || lb < 1e-6) continue;
-      const ang = Math.atan2(ax * by - ay * bx, ax * bx + ay * by);
-      kap[i] = Math.abs(ang) / ((la + lb) / 2);
+      kap[i] = Math.abs(Math.atan2(ax * by - ay * bx, ax * bx + ay * by)) / ((la + lb) / 2);
     }
     const kapS = kap.map((_, i) => { let s = 0, c = 0; for (let d = -3; d <= 3; d++) { const q = i + d; if (q >= 0 && q < N) { s += kap[q]; c++; } } return s / c; });
     const wmax = robot.wmax * D2R;
-    const segLim = j => {
-      let v = segV[j];
-      if (Math.abs(dthds[j]) > 1e-9) v = Math.min(v, wmax / Math.abs(dthds[j]));
-      return v;
-    };
+    const segLim = j => { let v = segV[j]; if (Math.abs(dthds[j]) > 1e-9) v = Math.min(v, wmax / Math.abs(dthds[j])); return v; };
     const vlim = new Array(N);
     for (let i = 0; i < N; i++) {
       let v = segLim(seg[i]);
@@ -216,22 +418,19 @@ const Core = (() => {
       vlim[i] = Math.max(v, 5);
     }
     const v = new Array(N).fill(0);
-    v[0] = 0;
     for (let i = 0; i < N - 1; i++) v[i + 1] = Math.min(vlim[i + 1], Math.sqrt(v[i] * v[i] + 2 * robot.amax * (ss[i + 1] - ss[i])));
     v[N - 1] = 0;
     for (let i = N - 2; i >= 0; i--) v[i] = Math.min(v[i], Math.sqrt(v[i + 1] * v[i + 1] + 2 * robot.amax * (ss[i + 1] - ss[i])));
     v[0] = 0;
     const tt = [0];
     for (let i = 0; i < N - 1; i++) {
-      const ds = ss[i + 1] - ss[i];
-      const va = (v[i] + v[i + 1]) / 2;
+      const ds = ss[i + 1] - ss[i], va = (v[i] + v[i + 1]) / 2;
       tt.push(tt[i] + (ds < 1e-9 ? 0 : (va > 1e-6 ? ds / va : Math.sqrt(2 * ds / robot.amax))));
     }
     const T = tt[N - 1];
-    const times = sampleTimes(T, dt);
     const samples = [];
     let i = 0;
-    for (const t of times) {
+    for (const t of sampleTimes(T, dt)) {
       while (i < N - 2 && tt[i + 1] < t) i++;
       const span = tt[i + 1] - tt[i];
       const f = span > 1e-9 ? Math.min(1, Math.max(0, (t - tt[i]) / span)) : 1;
@@ -243,33 +442,18 @@ const Core = (() => {
       const j = seg[i + 1];
       samples.push([x, y, thAt(s, j), vel * tx, vel * ty, dthds[j] * vel, vel]);
     }
-    // the time-scaling above keeps exact end time; fix endpoints exactly
     samples[0] = [pts[0].x, pts[0].y, thU[0], 0, 0, 0, 0];
     samples[samples.length - 1] = [pts[m - 1].x, pts[m - 1].y, thU[m - 1], 0, 0, 0, 0];
-    const knotSample = knotS.map(sk => {
-      let k = 0; while (k < N - 1 && ss[k] < sk - 1e-9) k++;
-      return Math.min(samples.length - 1, Math.round(tt[k] / dt));
-    });
+    const knotSample = knotS.map(sk => { let k = 0; while (k < N - 1 && ss[k] < sk - 1e-9) k++; return Math.min(samples.length - 1, Math.round(tt[k] / dt)); });
     return { samples, knotSample, T };
   }
-
-  // Exact dt spacing (firmware assumes TRAJ_DT_S); last sample lands exactly on T.
-  function sampleTimes(T, dt) {
-    const out = [];
-    for (let n = 0; n * dt < T - 1e-6; n++) out.push(n * dt);
-    out.push(T);
-    if (out.length < 2) out.unshift(0);
-    return out;
-  }
-
   function rotationChain(p, th0, th1, robot) {
     const dt = robot.dt / 1000;
     const d = th1 - th0, D = Math.abs(d), sg = Math.sign(d) || 1;
     const w = robot.wmax * D2R, al = robot.walpha * D2R;
     if (D < 1e-4) return { samples: [[p.x, p.y, th0, 0, 0, 0, 0]], knotSample: [0, 0], T: 0 };
     let ta, tc, wp;
-    if (D >= w * w / al) { ta = w / al; tc = (D - w * w / al) / w; wp = w; }
-    else { ta = Math.sqrt(D / al); tc = 0; wp = al * ta; }
+    if (D >= w * w / al) { ta = w / al; tc = (D - w * w / al) / w; wp = w; } else { ta = Math.sqrt(D / al); tc = 0; wp = al * ta; }
     const T = 2 * ta + tc;
     const samples = [];
     for (const t of sampleTimes(T, dt)) {
@@ -283,32 +467,29 @@ const Core = (() => {
     return { samples, knotSample: [0, samples.length - 1], T };
   }
 
-  // Compile full plan -> { traj, steps, warnings, T, schedule }
   function compile(state) {
     const { points, robot, field } = state;
     const warnings = [];
-    if (points.length < 2) return { traj: [], steps: [], warnings: ['Cần ít nhất 2 điểm.'], T: 0, schedule: [] };
+    if (points.length < 2) return { traj: [], steps: [], warnings: ['Cần ít nhất 2 điểm.'], T: 0, schedule: [], hits: [] };
     const n = points.length;
     const thU = [points[0].th * D2R];
     for (let i = 1; i < n; i++) thU.push(thU[i - 1] + wrap180(points[i].th - points[i - 1].th) * D2R);
     const isStop = points.map((p, i) => i === 0 || i === n - 1 || !!p.stop);
-    for (let i = 0; i < n - 1; i++) {
-      if (Math.hypot(points[i + 1].x - points[i].x, points[i + 1].y - points[i].y) < 1) { isStop[i] = true; isStop[i + 1] = true; }
-    }
+    for (let i = 0; i < n - 1; i++) if (Math.hypot(points[i + 1].x - points[i].x, points[i + 1].y - points[i].y) < 1) { isStop[i] = true; isStop[i + 1] = true; }
     const traj = [], steps = [];
     const pushActions = (p, idx, stopHere) => {
       for (const a of p.actions || []) {
         const async = !stopHere || !a.wait;
-        if (a.type === 'lift') steps.push({ type: ST.LIFT, flags: async ? SF_ASYNC : 0, a: 0, b: 0, p1: +a.mm || 0, p2: 0, label: `#${idx} lift ${a.mm}mm` });
+        if (a.type === 'lift') steps.push({ type: ST.LIFT, flags: async ? SF_ASYNC : 0, a: 0, b: 0, p1: +a.mm || 0, p2: 0, label: `#${idx} lift ${cm(a.mm)}cm` });
         else if (a.type === 'custom') steps.push({ type: ST.CUSTOM, flags: async ? SF_ASYNC : 0, a: a.id | 0, b: 0, p1: +a.param || 0, p2: 0, label: `#${idx} custom ${a.id}` });
-        else if (!stopHere) { warnings.push(`Điểm #${idx}: "${a.type}" chỉ chạy ở điểm Dừng → bỏ qua.`); }
+        else if (!stopHere) warnings.push(`Điểm #${idx}: "${a.type}" chỉ chạy ở điểm Dừng → bỏ qua.`);
         else if (a.type === 'wait') steps.push({ type: ST.WAIT, flags: 0, a: 0, b: 0, p1: +a.ms || 0, p2: 0, label: `#${idx} chờ ${a.ms}ms` });
         else if (a.type === 'wall') {
           steps.push({ type: ST.WALL, flags: 0, a: SIDES.indexOf(a.side), b: WALLS.indexOf(a.wall), p1: +a.timeout || 2000, p2: 0, label: `#${idx} ép tường` });
           const err = Math.abs(wrap180(p.th + SIDE_ANG[a.side] - WALL_NORMAL[a.wall]));
           if (err > 10) warnings.push(`Điểm #${idx}: mặt ${SIDE_VN[a.side]} lệch ${err.toFixed(0)}° so với tường ${WALL_VN[a.wall]} — chỉnh góc θ.`);
           const dWall = { left: p.x, right: field.w - p.x, bottom: p.y, top: field.h - p.y }[a.wall] - sideDist(a.side, robot);
-          if (dWall > 300) warnings.push(`Điểm #${idx}: cách tường ${dWall.toFixed(0)}mm, nên đặt điểm gần tường hơn (<300mm).`);
+          if (dWall > 300) warnings.push(`Điểm #${idx}: cách tường ${cm(dWall)} cm, nên đặt gần tường hơn (<30 cm).`);
         } else if (a.type === 'tof') {
           steps.push({ type: ST.TOF, flags: 0, a: a.sensor | 0, b: WALLS.indexOf(a.wall), p1: +a.maxCorr || 150, p2: 0, label: `#${idx} ToF${a.sensor}` });
         }
@@ -319,10 +500,8 @@ const Core = (() => {
     while (a < n - 1) {
       let b = a + 1; while (!isStop[b]) b++;
       const idxs = []; for (let i = a; i <= b; i++) idxs.push(i);
-      const pts = idxs.map(i => points[i]);
-      const th = idxs.map(i => thU[i]);
-      const segV = idxs.slice(1).map(i => (points[i].vmax > 0 ? Math.min(points[i].vmax, robot.vmax) : robot.vmax));
-      const ch = buildChain(pts, th, segV, robot);
+      const ch = buildChain(idxs.map(i => points[i]), idxs.map(i => thU[i]),
+        idxs.slice(1).map(i => (points[i].vmax > 0 ? Math.min(points[i].vmax, robot.vmax) : robot.vmax)), robot);
       const base = traj.length;
       for (const s of ch.samples) traj.push(s);
       let cur = base;
@@ -337,16 +516,18 @@ const Core = (() => {
       pushActions(points[b], b, true);
       a = b;
     }
-    // bounds check
     points.forEach((p, i) => {
       const r = Math.hypot(robot.len, robot.wid) / 2;
       if (p.x < 0 || p.y < 0 || p.x > field.w || p.y > field.h) warnings.push(`Điểm #${i} nằm ngoài sân.`);
       else if (p.x < r * 0.7 || p.y < r * 0.7 || p.x > field.w - r * 0.7 || p.y > field.h - r * 0.7) {
-        const hasWall = (p.actions || []).some(x => x.type === 'wall');
-        if (!hasWall) warnings.push(`Điểm #${i} sát tường, robot có thể đụng.`);
+        if (!(p.actions || []).some(x => x.type === 'wall')) warnings.push(`Điểm #${i} sát tường, robot có thể đụng.`);
       }
+      const hr = footprintHit(state, p.x, p.y, p.th * D2R);
+      if (hr) warnings.push(`Điểm #${i}: robot chạm vùng tránh "${hr.name}".`);
     });
-    // schedule for sim
+    const hits = collisions(state, traj);
+    const byReg = new Map(); for (const h of hits) byReg.set(h.r.name, (byReg.get(h.r.name) || 0) + 1);
+    for (const [nm] of byReg) warnings.push(`Đường đi chạm vùng tránh "${nm}" → bấm "Tự né vùng tránh".`);
     const dt = robot.dt / 1000;
     const schedule = []; let t = 0; let liftH = 0;
     for (const s of steps) {
@@ -359,7 +540,7 @@ const Core = (() => {
       else if (s.type === ST.CUSTOM) dur = (s.flags & SF_ASYNC) ? 0 : 0.5;
       schedule.push({ step: s, t0: t, t1: t + dur }); t += dur;
     }
-    return { traj, steps, warnings, T: t, schedule };
+    return { traj, steps, warnings, T: t, schedule, hits };
   }
 
   function poseAt(plan, t) {
@@ -369,12 +550,9 @@ const Core = (() => {
     for (const e of schedule) {
       if (e.step.type === 0) {
         if (t < e.t0) break;
-        const dur = e.t1 - e.t0;
-        const f = dur > 0 ? Math.min(1, (t - e.t0) / dur) : 1;
-        const fi = e.step.a + f * (e.step.b - e.step.a);
-        const i0 = Math.floor(fi), i1 = Math.min(traj.length - 1, i0 + 1), g = fi - i0;
-        const A = traj[i0], B = traj[i1];
-        last = A.map((v, k) => v + g * (B[k] - v));
+        const dur = e.t1 - e.t0, f = dur > 0 ? Math.min(1, (t - e.t0) / dur) : 1;
+        const fi = e.step.a + f * (e.step.b - e.step.a), i0 = Math.floor(fi), i1 = Math.min(traj.length - 1, i0 + 1), g = fi - i0;
+        last = traj[i0].map((v, k) => v + g * (traj[i1][k] - v));
         if (t <= e.t1) label = e.step.label;
       } else if (t >= e.t0 && t <= e.t1 && e.t1 > e.t0) label = e.step.label;
     }
@@ -388,7 +566,8 @@ const Core = (() => {
     L.push(`// path_data.h — tạo bởi ORC Path Planner`);
     L.push(`// Path: ${state.name}   |   ${new Date().toLocaleString('vi-VN')}`);
     L.push(`// ${state.points.length} điểm, ${plan.traj.length} mẫu (${state.robot.dt} ms), ${plan.steps.length} bước, ~${plan.T.toFixed(1)} s`);
-    L.push(`// Hệ toạ độ: gốc góc dưới-trái sân, x sang phải, y lên trên (mm). θ: rad, ngược chiều kim đồng hồ, 0 = hướng +x.`);
+    L.push(`// Sân ${cm(state.field.w)} x ${cm(state.field.h)} cm, robot ${cm(state.robot.len)} x ${cm(state.robot.wid)} cm`);
+    L.push(`// Đơn vị trong file: mm. Gốc góc dưới-trái sân, x sang phải, y lên trên. θ: rad, ngược chiều kim đồng hồ, 0 = hướng +x.`);
     L.push(`#pragma once`);
     L.push(`#include <stdint.h>`);
     L.push('');
@@ -424,65 +603,61 @@ const Core = (() => {
     return L.join('\n') + '\n';
   }
 
-  function mirror(state, axis) { // axis 'x' => lật trái/phải, 'y' => lật trên/dưới
+  function mirror(state, axis) {
     const tofSides = String(state.robot.tofSides || '').split(',').map(s => s.trim());
     for (const p of state.points) {
       if (axis === 'x') { p.x = state.field.w - p.x; p.th = wrap180(180 - p.th); }
       else { p.y = state.field.h - p.y; p.th = wrap180(-p.th); }
       for (const a of p.actions || []) {
-        if (a.type === 'wall') {
-          const sg = -SIDE_ANG[a.side];
-          a.side = sideFromAngle(sg);
-          a.wall = wallFacing(p.th + SIDE_ANG[a.side]);
-        } else if (a.type === 'tof') {
-          const sd = tofSides[a.sensor] || 'front';
-          a.wall = wallFacing(p.th + (SIDE_ANG[sd] ?? 0));
-        }
+        if (a.type === 'wall') { a.side = sideFromAngle(-SIDE_ANG[a.side]); a.wall = wallFacing(p.th + SIDE_ANG[a.side]); }
+        else if (a.type === 'tof') a.wall = wallFacing(p.th + (SIDE_ANG[tofSides[a.sensor] || 'front'] ?? 0));
       }
     }
   }
 
-  return { D2R, R2D, SIDES, SIDE_ANG, SIDE_VN, WALLS, WALL_NORMAL, WALL_VN, ST, wrap180, sideFromAngle, wallFacing,
-           nearestWall, sideDist, defaultState, compile, poseAt, toHeader, mirror };
+  return { D2R, R2D, SIDES, SIDE_ANG, SIDE_VN, WALLS, WALL_NORMAL, WALL_VN, ST, cm, wrap180, sideFromAngle, wallFacing,
+           nearestWall, sideDist, defaultState, normalize, compile, poseAt, toHeader, mirror, detectRegions,
+           footprintHit, segmentHits, planAround, avoidSegment, avoidAll, approachObject, rectHitsBox };
 })();
 /*CORE-END*/
 </script>
 
 <script>
 (() => {
-const C = Core;
+const C = Core, cm = C.cm;
 const $ = s => document.querySelector(s);
 const cv = $('#cv'), ctx = cv.getContext('2d'), wrap = $('#cwrap');
-let S = load() || C.defaultState();
+let S = C.normalize(load() || C.defaultState());
 let plan = C.compile(S);
-let sel = -1, mode = 'add', tab = 'pt';
+let sel = -1, selReg = -1, mode = 'add', tab = 'pt';
 let view = { s: 0.2, ox: 0, oy: 0, fitted: false };
 let simT = 0, playing = false, lastFrame = 0;
 let bgImg = null;
 const hist = [], fut = [];
 
 function load() { try { const j = localStorage.getItem('orcPlanner.v1'); return j ? JSON.parse(j) : null; } catch (e) { return null; } }
-function save() { try { localStorage.setItem('orcPlanner.v1', JSON.stringify(S)); } catch (e) { /* quota */ } }
-function snapshot() { hist.push(JSON.stringify(S)); if (hist.length > 80) hist.shift(); fut.length = 0; }
-function changed(rebuildPanel) { plan = C.compile(S); save(); if (rebuildPanel) renderPane(); else if (tab === 'exp') renderPane(); draw(); }
+function save() { try { localStorage.setItem('orcPlanner.v1', JSON.stringify(S)); } catch (e) { try { const c = JSON.parse(JSON.stringify(S)); delete c.field.bg; localStorage.setItem('orcPlanner.v1', JSON.stringify(c)); } catch (e2) { /* hết dung lượng */ } } }
+function snapshot() { hist.push(JSON.stringify(S)); if (hist.length > 60) hist.shift(); fut.length = 0; }
+function changed(rebuildPanel) { plan = C.compile(S); save(); if (rebuildPanel || tab === 'exp') renderPane(); draw(); }
 function setBg() { bgImg = null; if (S.field.bg) { const im = new Image(); im.onload = () => { bgImg = im; draw(); }; im.src = S.field.bg; } }
 setBg();
+const busy = on => { $('#busy').style.display = on ? 'flex' : 'none'; };
 
-$('#undo').onclick = () => { if (!hist.length) return; fut.push(JSON.stringify(S)); S = JSON.parse(hist.pop()); sel = Math.min(sel, S.points.length - 1); setBg(); changed(true); };
-$('#redo').onclick = () => { if (!fut.length) return; hist.push(JSON.stringify(S)); S = JSON.parse(fut.pop()); setBg(); changed(true); };
+$('#undo').onclick = () => { if (!hist.length) return; fut.push(JSON.stringify(S)); S = C.normalize(JSON.parse(hist.pop())); sel = Math.min(sel, S.points.length - 1); selReg = -1; setBg(); changed(true); };
+$('#redo').onclick = () => { if (!fut.length) return; hist.push(JSON.stringify(S)); S = C.normalize(JSON.parse(fut.pop())); selReg = -1; setBg(); changed(true); };
 $('#pname').value = S.name;
 $('#pname').oninput = e => { S.name = e.target.value || 'auto1'; save(); };
 
-// ---------- view ----------
+// ---------- khung nhìn ----------
 function resize() {
   const r = wrap.getBoundingClientRect(), d = window.devicePixelRatio || 1;
   cv.width = r.width * d; cv.height = r.height * d; ctx.setTransform(d, 0, 0, d, 0, 0);
   if (!view.fitted) fit(); draw();
 }
 function fit() {
-  const r = wrap.getBoundingClientRect(), m = 30;
-  view.s = Math.min((r.width - 2 * m) / S.field.w, (r.height - 2 * m - 50) / S.field.h);
-  view.ox = (r.width - S.field.w * view.s) / 2; view.oy = (r.height - 50 + S.field.h * view.s) / 2; view.fitted = true;
+  const r = wrap.getBoundingClientRect(), m = 24, top = 46, bot = 56;
+  view.s = Math.min((r.width - 2 * m) / S.field.w, (r.height - top - bot - 14) / S.field.h);
+  view.ox = (r.width - S.field.w * view.s) / 2; view.oy = top + (r.height - top - bot - 14 + S.field.h * view.s) / 2; view.fitted = true;
 }
 const P = (x, y) => [view.ox + x * view.s, view.oy - y * view.s];
 const F = (px, py) => [(px - view.ox) / view.s, (view.oy - py) / view.s];
@@ -494,11 +669,15 @@ $('#zIn').onclick = () => zoom(1.25); $('#zOut').onclick = () => zoom(0.8); $('#
 cv.addEventListener('wheel', e => { e.preventDefault(); const r = cv.getBoundingClientRect(); zoom(e.deltaY < 0 ? 1.1 : 0.9, e.clientX - r.left, e.clientY - r.top); }, { passive: false });
 window.addEventListener('resize', resize);
 
-function setMode(m) { mode = m; $('#mAdd').classList.toggle('on', m === 'add'); $('#mSel').classList.toggle('on', m === 'sel'); }
-$('#mAdd').onclick = () => setMode('add'); $('#mSel').onclick = () => setMode('sel');
+function setMode(m) {
+  mode = m; ['add', 'sel', 'reg'].forEach(k => $('#m' + k[0].toUpperCase() + k.slice(1)).classList.toggle('on', k === m));
+  if (m === 'reg') { tab = 'map'; renderTabs(); }
+  renderPane(); draw();
+}
+$('#mAdd').onclick = () => setMode('add'); $('#mSel').onclick = () => setMode('sel'); $('#mReg').onclick = () => setMode('reg');
 
-// ---------- drawing ----------
-function rr(x, y, w, h, th) { // robot footprint (field coords)
+// ---------- vẽ ----------
+function rr(x, y, w, h, th) {
   const c = Math.cos(th), s = Math.sin(th), pts = [[w / 2, h / 2], [-w / 2, h / 2], [-w / 2, -h / 2], [w / 2, -h / 2]];
   ctx.beginPath(); pts.forEach(([a, b], i) => { const [px, py] = P(x + a * c - b * s, y + a * s + b * c); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); ctx.closePath();
 }
@@ -511,34 +690,71 @@ function arrow(x, y, th, len, color, lw) {
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 function handlePos(i) { const p = S.points[i], L = Math.max(S.robot.len, S.robot.wid) * 0.85; return [p.x + L * Math.cos(p.th * C.D2R), p.y + L * Math.sin(p.th * C.D2R)]; }
 function badge(p) {
-  return (p.actions || []).map(a => a.type === 'lift' ? `⬆${a.mm}` : a.type === 'wait' ? `⏱${a.ms}` : a.type === 'wall' ? `▮${C.SIDE_VN[a.side][0].toUpperCase()}` :
+  return (p.actions || []).map(a => a.type === 'lift' ? `⬆${cm(a.mm)}` : a.type === 'wait' ? `⏱${a.ms}` : a.type === 'wall' ? `▮${C.SIDE_VN[a.side][0].toUpperCase()}` :
     a.type === 'tof' ? `ToF${a.sensor}` : `★${a.id}`).join(' ');
+}
+let hatch = null;
+function hatchPattern() {
+  if (hatch) return hatch;
+  const c = document.createElement('canvas'); c.width = c.height = 10; const g = c.getContext('2d');
+  g.strokeStyle = 'rgba(220,38,38,.75)'; g.lineWidth = 2; g.beginPath(); g.moveTo(0, 10); g.lineTo(10, 0); g.stroke();
+  hatch = ctx.createPattern(c, 'repeat'); return hatch;
+}
+function drawRegions() {
+  S.regions.forEach((r, i) => {
+    if (r.kind === 'none' && mode !== 'reg' && i !== selReg) return;
+    const [x0, y0] = P(r.x, r.y + r.h), [x1, y1] = P(r.x + r.w, r.y);
+    if (r.kind === 'avoid') {
+      ctx.fillStyle = 'rgba(220,38,38,.18)'; ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      ctx.fillStyle = hatchPattern(); ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2; ctx.setLineDash([]);
+      const m = (S.field.margin || 0) * view.s; ctx.setLineDash([3, 3]); ctx.strokeStyle = 'rgba(220,38,38,.6)'; ctx.lineWidth = 1;
+      ctx.strokeRect(x0 - m, y0 - m, x1 - x0 + 2 * m, y1 - y0 + 2 * m); ctx.setLineDash([]); ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2;
+    } else if (r.kind === 'object') {
+      ctx.fillStyle = 'rgba(22,163,74,.18)'; ctx.fillRect(x0, y0, x1 - x0, y1 - y0); ctx.strokeStyle = '#16a34a'; ctx.lineWidth = 2.5;
+    } else { ctx.strokeStyle = 'rgba(100,100,100,.9)'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]); }
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0); ctx.setLineDash([]);
+    if (i === selReg) { ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 3; ctx.strokeRect(x0 - 2, y0 - 2, x1 - x0 + 4, y1 - y0 + 4); }
+    if (r.kind !== 'none' || mode === 'reg') {
+      ctx.font = '10px system-ui'; ctx.fillStyle = r.kind === 'avoid' ? '#b91c1c' : r.kind === 'object' ? '#166534' : '#444';
+      if (x1 - x0 > 26) ctx.fillText((r.kind === 'object' ? '★ ' : r.kind === 'avoid' ? '⛔ ' : '') + r.name, x0 + 2, y0 + 11);
+    }
+  });
 }
 function draw() {
   const r = wrap.getBoundingClientRect(); ctx.clearRect(0, 0, r.width, r.height);
   const W = S.field.w, H = S.field.h;
   const [x0, y0] = P(0, H), [x1, y1] = P(W, 0);
   ctx.fillStyle = css('--field'); ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
-  if (bgImg) { ctx.globalAlpha = S.field.bgOpacity ?? 0.6; ctx.drawImage(bgImg, x0, y0, x1 - x0, y1 - y0); ctx.globalAlpha = 1; }
+  if (bgImg) { ctx.globalAlpha = S.field.bgOpacity ?? 0.9; ctx.drawImage(bgImg, x0, y0, x1 - x0, y1 - y0); ctx.globalAlpha = 1; }
   let g = S.field.grid || 100; while (g * view.s < 8) g *= 2;
-  ctx.lineWidth = 1;
+  ctx.lineWidth = 1; ctx.globalAlpha = bgImg ? 0.35 : 1;
   for (let x = 0; x <= W; x += g) { ctx.strokeStyle = (Math.round(x) % 500 === 0) ? css('--grid2') : css('--grid'); const [a] = P(x, 0); ctx.beginPath(); ctx.moveTo(a, y0); ctx.lineTo(a, y1); ctx.stroke(); }
   for (let y = 0; y <= H; y += g) { ctx.strokeStyle = (Math.round(y) % 500 === 0) ? css('--grid2') : css('--grid'); const [, b] = P(0, y); ctx.beginPath(); ctx.moveTo(x0, b); ctx.lineTo(x1, b); ctx.stroke(); }
+  ctx.globalAlpha = 1;
   ctx.strokeStyle = css('--wall'); ctx.lineWidth = 3; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
   ctx.fillStyle = css('--muted'); ctx.font = '11px system-ui';
-  ctx.fillText(`(0,0)   ${W}×${H} mm`, x0 + 2, y1 + 14);
+  ctx.fillText(`(0,0)   ${cm(W)} × ${cm(H)} cm`, x0 + 2, y1 + 14);
   arrow(0, 0, 0, 0.06 * W, '#ef4444', 2); arrow(0, 0, Math.PI / 2, 0.06 * W, '#22c55e', 2);
-  // path colored by speed
+  drawRegions();
+  // đường đi theo tốc độ
   const T = plan.traj, vmax = S.robot.vmax;
   ctx.lineWidth = 3;
   for (let i = 0; i < T.length - 1; i++) {
     const v = T[i][6] ?? Math.hypot(T[i][3], T[i][4]);
-    const hue = 220 - 220 * Math.min(1, v / vmax);
-    ctx.strokeStyle = `hsl(${hue},85%,50%)`;
+    ctx.strokeStyle = `hsl(${220 - 220 * Math.min(1, v / vmax)},85%,50%)`;
     const [a, b] = P(T[i][0], T[i][1]), [c, d] = P(T[i + 1][0], T[i + 1][1]);
     ctx.beginPath(); ctx.moveTo(a, b); ctx.lineTo(c, d); ctx.stroke();
   }
-  // tof rays
+  // va chạm
+  if (plan.hits.length) {
+    const seen = new Set();
+    for (const h of plan.hits) {
+      const s = T[h.i]; const [a, b] = P(s[0], s[1]);
+      ctx.fillStyle = '#dc2626'; ctx.beginPath(); ctx.arc(a, b, 3, 0, 7); ctx.fill();
+      if (!seen.has(h.r.name)) { seen.add(h.r.name); rr(s[0], s[1], S.robot.len, S.robot.wid, s[2]); ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2; ctx.setLineDash([5, 3]); ctx.stroke(); ctx.setLineDash([]); }
+    }
+  }
   const tofSides = String(S.robot.tofSides || '').split(',').map(s => s.trim());
   S.points.forEach(p => (p.actions || []).forEach(a => {
     if (a.type !== 'tof') return;
@@ -548,29 +764,33 @@ function draw() {
     const [a1, b1] = P(p.x, p.y), [a2, b2] = P(tx, ty); ctx.beginPath(); ctx.moveTo(a1, b1); ctx.lineTo(a2, b2); ctx.stroke(); ctx.setLineDash([]);
     arrow(p.x, p.y, dir, 150, '#a855f7', 1.5);
   }));
-  // points
+  const ptAlpha = mode === 'reg' ? 0.35 : 1; ctx.globalAlpha = ptAlpha;
   S.points.forEach((p, i) => {
     const stop = i === 0 || i === S.points.length - 1 || p.stop;
     if (stop || i === sel) {
       rr(p.x, p.y, S.robot.len, S.robot.wid, p.th * C.D2R);
-      ctx.fillStyle = i === sel ? 'rgba(37,99,235,.18)' : 'rgba(120,120,120,.10)'; ctx.fill();
-      ctx.strokeStyle = i === sel ? '#2563eb' : 'rgba(120,120,120,.6)'; ctx.lineWidth = 1.5; ctx.stroke();
-      arrow(p.x, p.y, p.th * C.D2R, S.robot.len * 0.45, i === sel ? '#2563eb' : '#888', 2);
+      ctx.fillStyle = i === sel ? 'rgba(37,99,235,.18)' : 'rgba(120,120,120,.12)'; ctx.fill();
+      ctx.strokeStyle = i === sel ? '#2563eb' : 'rgba(60,60,60,.6)'; ctx.lineWidth = 1.5; ctx.stroke();
+      arrow(p.x, p.y, p.th * C.D2R, S.robot.len * 0.45, i === sel ? '#2563eb' : '#555', 2);
     }
     const [a, b] = P(p.x, p.y);
     ctx.beginPath(); ctx.arc(a, b, 11, 0, 7);
-    ctx.fillStyle = i === 0 ? '#16a34a' : (i === S.points.length - 1 ? '#dc2626' : (stop ? '#2563eb' : css('--panel')));
+    ctx.fillStyle = i === 0 ? '#16a34a' : (i === S.points.length - 1 ? '#dc2626' : (stop ? '#2563eb' : '#fff'));
     ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = i === sel ? '#f59e0b' : '#2563eb'; ctx.stroke();
-    ctx.fillStyle = (stop) ? '#fff' : css('--ink'); ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = stop ? '#fff' : '#1d2330'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(String(i), a, b + 0.5); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-    const bd = badge(p); if (bd) { ctx.font = '11px system-ui'; ctx.fillStyle = css('--ink'); ctx.fillText(bd, a + 14, b - 12); }
+    const bd = badge(p); if (bd) { ctx.font = 'bold 11px system-ui'; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.strokeText(bd, a + 14, b - 12); ctx.fillStyle = '#1d2330'; ctx.fillText(bd, a + 14, b - 12); }
   });
-  if (sel >= 0 && S.points[sel]) {
-    const [hx, hy] = handlePos(sel); const [a, b] = P(hx, hy);
+  ctx.globalAlpha = 1;
+  if (mode !== 'reg' && sel >= 0 && S.points[sel]) {
+    const [a, b] = P(...handlePos(sel));
     ctx.beginPath(); ctx.arc(a, b, 9, 0, 7); ctx.fillStyle = '#f59e0b'; ctx.fill();
     ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('θ', a, b + 0.5); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   }
-  // sim robot
+  if (drawRect) {
+    const [a, b] = P(drawRect.x0, drawRect.y0), [c, d] = P(drawRect.x1, drawRect.y1);
+    ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.strokeRect(Math.min(a, c), Math.min(b, d), Math.abs(c - a), Math.abs(d - b)); ctx.setLineDash([]);
+  }
   if (plan.traj.length && (simT > 0 || playing)) {
     const q = C.poseAt(plan, simT);
     if (q) { rr(q.x, q.y, S.robot.len, S.robot.wid, q.th); ctx.fillStyle = 'rgba(245,158,11,.35)'; ctx.fill(); ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2; ctx.stroke(); arrow(q.x, q.y, q.th, S.robot.len * 0.5, '#f59e0b', 2.5); }
@@ -578,52 +798,71 @@ function draw() {
   } else $('#simlbl').textContent = `${plan.T.toFixed(1)} s`;
 }
 
-// ---------- pointer ----------
-let drag = null;
-function hit(px, py) {
+// ---------- chạm / kéo ----------
+let drag = null, drawRect = null;
+function hitPoint(px, py) {
   if (sel >= 0 && S.points[sel]) { const [a, b] = P(...handlePos(sel)); if (Math.hypot(px - a, py - b) < 16) return { kind: 'th', i: sel }; }
   for (let i = S.points.length - 1; i >= 0; i--) { const [a, b] = P(S.points[i].x, S.points[i].y); if (Math.hypot(px - a, py - b) < 16) return { kind: 'pt', i }; }
   return null;
+}
+function hitRegion(fx, fy) {
+  let best = -1, ba = Infinity;
+  S.regions.forEach((r, i) => { if (fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h && r.w * r.h < ba) { ba = r.w * r.h; best = i; } });
+  return best;
 }
 const snap = v => { const s = S.field.snap || 1; return Math.round(v / s) * s; };
 cv.addEventListener('pointerdown', e => {
   cv.setPointerCapture(e.pointerId);
   const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
-  const h = hit(px, py);
+  const h = mode === 'reg' ? null : hitPoint(px, py);
   drag = { h, px, py, sx: px, sy: py, moved: false, snapped: false, vox: view.ox, voy: view.oy };
   if (h && h.kind === 'pt' && sel !== h.i) { sel = h.i; tab = 'pt'; renderTabs(); renderPane(); draw(); }
 });
 cv.addEventListener('pointermove', e => {
   const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
-  const [fx, fy] = F(px, py); $('#coord').textContent = `x ${fx.toFixed(0)}  y ${fy.toFixed(0)} mm`;
+  const [fx, fy] = F(px, py); $('#coord').textContent = `x ${cm(fx)}  y ${cm(fy)} cm`;
   if (!drag) return;
   if (Math.hypot(px - drag.sx, py - drag.sy) > 5) drag.moved = true;
   if (!drag.moved) return;
+  if (mode === 'reg') {
+    const [ax, ay] = F(drag.sx, drag.sy);
+    drawRect = { x0: snap(ax), y0: snap(ay), x1: snap(fx), y1: snap(fy) }; draw(); return;
+  }
   if (drag.h) {
     if (!drag.snapped) { snapshot(); drag.snapped = true; }
     const p = S.points[drag.h.i];
     if (drag.h.kind === 'pt') { p.x = snap(fx); p.y = snap(fy); }
-    else { let a = Math.atan2(fy - p.y, fx - p.x) * C.R2D; p.th = C.wrap180(Math.round(a / 5) * 5); }
+    else p.th = C.wrap180(Math.round(Math.atan2(fy - p.y, fx - p.x) * C.R2D / 5) * 5);
     plan = C.compile(S); draw(); syncInputs();
   } else { view.ox = drag.vox + (px - drag.sx); view.oy = drag.voy + (py - drag.sy); draw(); }
 });
-cv.addEventListener('pointerup', e => {
+cv.addEventListener('pointerup', () => {
   if (!drag) return;
   const d = drag; drag = null;
+  if (mode === 'reg') {
+    if (d.moved && drawRect) {
+      const x = Math.min(drawRect.x0, drawRect.x1), y = Math.min(drawRect.y0, drawRect.y1), w = Math.abs(drawRect.x1 - drawRect.x0), h = Math.abs(drawRect.y1 - drawRect.y0);
+      drawRect = null;
+      if (w >= 20 && h >= 20) { snapshot(); S.regions.push({ x, y, w, h, color: '#dc2626', name: `Vùng vẽ ${S.regions.length + 1}`, kind: 'avoid' }); selReg = S.regions.length - 1; changed(true); }
+      else draw();
+      return;
+    }
+    const [fx, fy] = F(d.px, d.py); selReg = hitRegion(fx, fy); renderPane(); draw();
+    const el2 = document.querySelector('.reg.sel'); if (el2) el2.scrollIntoView({ block: 'nearest' });
+    return;
+  }
   if (d.moved) { if (d.h) changed(false); return; }
   if (d.h) return;
   if (mode === 'add') {
     const [fx, fy] = F(d.px, d.py);
     snapshot();
     const last = S.points[S.points.length - 1];
-    const th = last ? C.wrap180(Math.round(Math.atan2(fy - last.y, fx - last.x) * C.R2D / 5) * 5) : 90;
-    S.points.push({ x: snap(fx), y: snap(fy), th: last ? last.th : th, stop: true, vmax: 0, actions: [] });
-    if (S.points.length > 2) S.points[S.points.length - 2].stop = S.points[S.points.length - 2].stop;
+    S.points.push({ x: snap(fx), y: snap(fy), th: last ? last.th : 90, stop: true, vmax: 0, actions: [] });
     sel = S.points.length - 1; tab = 'pt'; renderTabs(); changed(true);
   } else { sel = -1; renderPane(); draw(); }
 });
 
-// ---------- sim ----------
+// ---------- mô phỏng ----------
 $('#play').onclick = () => { playing = !playing; $('#play').textContent = playing ? '⏸' : '▶'; if (playing) { if (simT >= plan.T) simT = 0; lastFrame = performance.now(); requestAnimationFrame(tick); } };
 $('#simT').oninput = e => { simT = plan.T * e.target.value / 1000; draw(); };
 function tick(now) {
@@ -634,20 +873,24 @@ function tick(now) {
   if (playing) requestAnimationFrame(tick);
 }
 
-// ---------- panel ----------
+// ---------- bảng bên ----------
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; renderTabs(); renderPane(); });
 function renderTabs() { document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === tab)); }
 const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (v === null || v === undefined) continue; if (k.startsWith('on')) e[k] = v; else if (k === 'html') e.innerHTML = v; else e.setAttribute(k, v); } kids.flat().forEach(k => e.append(k)); return e; };
+let binds = [];
+function syncInputs() { binds.forEach(f => f()); }
 function num(label, get, set, opts = {}) {
   const inp = el('input', { type: 'number', step: opts.step ?? 'any', inputmode: 'decimal' });
-  inp.value = get(); inp.dataset.bind = opts.bind || '';
+  inp.value = get();
   inp.onfocus = () => snapshot();
-  inp.oninput = () => { const v = parseFloat(inp.value); if (!isNaN(v)) { set(v); changed(false); } };
+  inp.oninput = () => { const v = parseFloat(inp.value); if (!isNaN(v)) { set(v); if (opts.fit) view.fitted = false; changed(false); if (opts.fit) resize(); } };
   if (opts.bind) binds.push(() => { if (document.activeElement !== inp) inp.value = get(); });
   return el('label', { class: 'f' }, el('span', {}, label), inp);
 }
+// ô nhập theo cm, lưu mm
+const numCm = (label, get, set, opts = {}) => num(label, () => cm(get()), v => set(v * 10), opts);
 function sel_(label, options, get, set) {
-  const s = el('select'); for (const [v, t] of options) { const o = el('option', { value: v }, t); s.append(o); }
+  const s = el('select'); for (const [v, t] of options) s.append(el('option', { value: v }, t));
   s.value = get(); s.onchange = () => { snapshot(); set(s.value); changed(true); };
   return el('label', { class: 'f' }, el('span', {}, label), s);
 }
@@ -656,8 +899,10 @@ function chk(label, get, set) {
   c.onchange = () => { snapshot(); set(c.checked); changed(true); };
   return el('label', { class: 'f', style: 'display:flex;gap:6px;align-items:center' }, c, label);
 }
-let binds = [];
-function syncInputs() { binds.forEach(f => f()); }
+function kindSeg(r) {
+  const mk = (k, t) => el('button', { class: `k-${k}` + (r.kind === k ? ' on' : ''), onclick: e => { e.stopPropagation(); snapshot(); r.kind = k; changed(true); } }, t);
+  return el('div', { class: 'seg' }, mk('none', 'Bỏ qua'), mk('avoid', '⛔ Tránh'), mk('object', '★ Vật'));
+}
 
 const ACTION_TYPES = [['lift', '⬆ Nâng/hạ lift'], ['wait', '⏱ Chờ'], ['wall', '▮ Ép tường (sửa vị trí)'], ['tof', '📏 Sửa vị trí bằng ToF'], ['custom', '★ Hành động riêng']];
 function newAction(type, p) {
@@ -667,7 +912,7 @@ function newAction(type, p) {
   if (type === 'tof') { const sides = String(S.robot.tofSides).split(',').map(s => s.trim()); return { type, sensor: 0, wall: C.wallFacing(p.th + (C.SIDE_ANG[sides[0]] ?? 0)), maxCorr: 150 }; }
   return { type: 'custom', id: 1, param: 0, wait: true, note: '' };
 }
-function actionCard(p, i, a, k, stopHere) {
+function actionCard(p, a, k, stopHere) {
   const list = p.actions;
   const hd = el('div', { class: 'hd' }, el('span', {}, ACTION_TYPES.find(t => t[0] === a.type)[1]), el('span', { class: 'sp' }),
     el('button', { onclick: () => { if (k > 0) { snapshot(); [list[k - 1], list[k]] = [list[k], list[k - 1]]; changed(true); } } }, '↑'),
@@ -676,7 +921,7 @@ function actionCard(p, i, a, k, stopHere) {
   const body = el('div');
   const sides = C.SIDES.map(s => [s, 'Mặt ' + C.SIDE_VN[s]]), walls = C.WALLS.map(w => [w, 'Tường ' + C.WALL_VN[w]]);
   if (a.type === 'lift') {
-    body.append(num('Độ cao lift (mm)', () => a.mm, v => a.mm = v));
+    body.append(numCm('Độ cao lift (cm)', () => a.mm, v => a.mm = v));
     if (stopHere) body.append(chk('Chờ lift tới nơi rồi mới đi tiếp', () => a.wait, v => a.wait = v));
     else body.append(el('div', { class: 'hint' }, 'Điểm đi qua: lift chạy song song khi xe đang chạy.'));
   } else if (a.type === 'wait') body.append(num('Thời gian chờ (ms)', () => a.ms, v => a.ms = v));
@@ -688,7 +933,7 @@ function actionCard(p, i, a, k, stopHere) {
   } else if (a.type === 'tof') {
     const ts = String(S.robot.tofSides).split(',').map((s, j) => [String(j), `#${j} (${C.SIDE_VN[s.trim()] || s})`]);
     body.append(el('div', { class: 'row' }, sel_('Cảm biến', ts, () => String(a.sensor), v => a.sensor = +v), sel_('Đo tới tường', walls, () => a.wall, v => a.wall = v)));
-    body.append(num('Sửa tối đa (mm)', () => a.maxCorr, v => a.maxCorr = v));
+    body.append(numCm('Sửa tối đa (cm)', () => a.maxCorr, v => a.maxCorr = v));
   } else {
     body.append(el('div', { class: 'row' }, num('ID hành động', () => a.id, v => a.id = Math.round(v), { step: 1 }), num('Tham số', () => a.param, v => a.param = v)));
     const note = el('input', { placeholder: 'Ghi chú (vd: kẹp vật)' }); note.value = a.note || ''; note.oninput = () => { a.note = note.value; save(); };
@@ -700,6 +945,16 @@ function actionCard(p, i, a, k, stopHere) {
   return el('div', { class: 'card' }, hd, body);
 }
 
+function regionEditor(r, i) {
+  const box = el('div', { class: 'card' });
+  const name = el('input'); name.value = r.name; name.onchange = () => { snapshot(); r.name = name.value || r.name; changed(true); };
+  box.append(el('div', { class: 'hd' }, el('span', { class: 'sw', style: `display:inline-block;width:14px;height:14px;border-radius:3px;background:${r.color}` }), el('span', {}, 'Vùng đang chọn'), el('span', { class: 'sp' }),
+    el('button', { class: 'del', onclick: () => { snapshot(); S.regions.splice(i, 1); selReg = -1; changed(true); } }, 'Xoá vùng')));
+  box.append(el('label', { class: 'f' }, el('span', {}, 'Tên'), name), kindSeg(r));
+  box.append(el('div', { class: 'row' }, numCm('X (cm)', () => r.x, v => r.x = v), numCm('Y (cm)', () => r.y, v => r.y = v), numCm('Rộng (cm)', () => r.w, v => r.w = Math.max(10, v)), numCm('Cao (cm)', () => r.h, v => r.h = Math.max(10, v))));
+  return box;
+}
+
 function renderPane() {
   binds = [];
   const pane = $('#pane'); pane.innerHTML = '';
@@ -707,7 +962,7 @@ function renderPane() {
     if (sel < 0 || !S.points[sel]) {
       pane.append(el('div', { class: 'hint' }, mode === 'add' ? 'Chạm vào sân để thêm điểm tiếp theo. Chạm vào điểm để sửa.' : 'Chạm vào điểm để chọn. Kéo nền để di chuyển sân.'));
       const lst = el('div', { class: 'plist' });
-      S.points.forEach((p, i) => lst.append(el('button', { onclick: () => { sel = i; renderPane(); draw(); } }, `#${i}  (${p.x}, ${p.y})  θ ${p.th}°  ${badge(p)}`)));
+      S.points.forEach((p, i) => lst.append(el('button', { onclick: () => { sel = i; renderPane(); draw(); } }, `#${i}  (${cm(p.x)}, ${cm(p.y)}) cm  θ ${p.th}°  ${badge(p)}`)));
       pane.append(lst); return;
     }
     const p = S.points[sel], last = S.points.length - 1, stopHere = sel === 0 || sel === last || p.stop;
@@ -715,64 +970,163 @@ function renderPane() {
       el('button', { onclick: () => { sel = Math.max(0, sel - 1); renderPane(); draw(); } }, '◀'),
       el('b', { style: 'align-self:center' }, sel === 0 ? `#0 · Xuất phát` : sel === last ? `#${sel} · Cuối` : `Điểm #${sel}`),
       el('button', { onclick: () => { sel = Math.min(last, sel + 1); renderPane(); draw(); } }, '▶'),
-      el('button', { onclick: () => { snapshot(); const q = S.points[sel + 1]; const np = JSON.parse(JSON.stringify(p)); np.actions = []; if (q) { np.x = snap((p.x + q.x) / 2); np.y = snap((p.y + q.y) / 2); np.stop = false; } else { np.x = snap(p.x + 200); } S.points.splice(sel + 1, 0, np); sel++; changed(true); } }, '＋ Chèn sau'),
+      el('button', { onclick: () => { snapshot(); const q = S.points[sel + 1]; const np = JSON.parse(JSON.stringify(p)); np.actions = []; if (q) { np.x = snap((p.x + q.x) / 2); np.y = snap((p.y + q.y) / 2); np.stop = false; } else np.x = snap(p.x + 200); S.points.splice(sel + 1, 0, np); sel++; changed(true); } }, '＋ Chèn sau'),
       el('button', { class: 'del', onclick: () => { snapshot(); S.points.splice(sel, 1); sel = Math.min(sel, S.points.length - 1); changed(true); } }, 'Xoá')));
-    pane.append(el('div', { class: 'row' }, num('X (mm)', () => p.x, v => p.x = v, { bind: 1 }), num('Y (mm)', () => p.y, v => p.y = v, { bind: 1 }), num('θ (độ)', () => p.th, v => p.th = C.wrap180(v), { bind: 1 })));
+    pane.append(el('div', { class: 'row' }, numCm('X (cm)', () => p.x, v => p.x = v, { bind: 1 }), numCm('Y (cm)', () => p.y, v => p.y = v, { bind: 1 }), num('θ (độ)', () => p.th, v => p.th = C.wrap180(v), { bind: 1 })));
     if (sel !== 0 && sel !== last) pane.append(chk('Dừng tại điểm này (bỏ chọn = đi lướt qua)', () => !!p.stop, v => p.stop = v));
-    if (sel > 0) pane.append(num(`Tốc độ tối đa đoạn #${sel - 1}→#${sel} (mm/s, 0 = mặc định ${S.robot.vmax})`, () => p.vmax || 0, v => p.vmax = v));
+    if (sel > 0) pane.append(numCm(`Tốc độ tối đa đoạn #${sel - 1}→#${sel} (cm/s, 0 = mặc định ${cm(S.robot.vmax)})`, () => p.vmax || 0, v => p.vmax = v));
+    // vật & vùng tránh
+    const objs = S.regions.map((r, i) => [r, i]).filter(([r]) => r.kind === 'object');
+    const extra = el('div', { class: 'btns' });
+    if (objs.length) {
+      const pick = el('select'); objs.forEach(([r, i]) => pick.append(el('option', { value: i }, '★ ' + r.name)));
+      let best = objs[0][1], bd = Infinity; objs.forEach(([r, i]) => { const d = Math.hypot(r.x + r.w / 2 - p.x, r.y + r.h / 2 - p.y); if (d < bd) { bd = d; best = i; } }); pick.value = best;
+      extra.append(el('div', { class: 'row', style: 'width:100%' }, pick, el('button', { onclick: () => { snapshot(); C.approachObject(S, p, S.regions[+pick.value]); changed(true); } }, '🎯 Đặt điểm trước vật')));
+    }
+    if (sel > 0 && S.regions.some(r => r.kind === 'avoid')) extra.append(el('button', { onclick: () => { snapshot(); const n = C.avoidSegment(S, sel - 1); if (n > 0) { sel += n; toast(`Đã chèn ${n} điểm để né`); } else if (n === 0) toast('Đoạn này không chạm vùng tránh'); else toast('Không tìm được đường né'); changed(true); } }, `⛔ Né vùng tránh đoạn #${sel - 1}→#${sel}`));
+    if (extra.childNodes.length) pane.append(extra);
     pane.append(el('h3', {}, `Hành động tại điểm #${sel}`));
     if (!p.actions.length) pane.append(el('div', { class: 'hint' }, stopHere ? 'Chưa có. Các hành động chạy lần lượt sau khi xe dừng.' : 'Chưa có. Điểm đi qua chỉ nhận lift / hành động riêng (chạy song song).'));
-    p.actions.forEach((a, k) => pane.append(actionCard(p, sel, a, k, stopHere)));
+    p.actions.forEach((a, k) => pane.append(actionCard(p, a, k, stopHere)));
     const pick = el('select'); ACTION_TYPES.forEach(([v, t]) => { if (stopHere || v === 'lift' || v === 'custom') pick.append(el('option', { value: v }, t)); });
     pane.append(el('div', { class: 'row', style: 'margin-top:8px' }, pick, el('button', { class: 'pri', onclick: () => { snapshot(); p.actions.push(newAction(pick.value, p)); changed(true); } }, 'Thêm hành động')));
+  } else if (tab === 'map') {
+    const f = S.field;
+    pane.append(el('div', { class: 'btns' },
+      el('button', { class: 'pri', onclick: () => $('#fMap').click() }, '📄 Nhập file sa bàn (PDF / ảnh)'),
+      el('button', { onclick: loadPreset }, 'Sa bàn ORC 2026 có sẵn')));
+    pane.append(el('div', { class: 'hint' }, 'PDF: kích thước sân lấy theo khổ giấy (VD 364×364 cm). Ảnh: đặt kích thước sân bên dưới trước. App tự nhận các ô màu đặc thành vùng.'));
+    pane.append(el('div', { class: 'row' }, numCm('Sân rộng (cm)', () => f.w, v => f.w = v, { fit: 1 }), numCm('Sân cao (cm)', () => f.h, v => f.h = v, { fit: 1 })));
+    pane.append(el('div', { class: 'row' }, numCm('Lưới (cm)', () => f.grid, v => f.grid = Math.max(10, v)), numCm('Bắt điểm (cm)', () => f.snap, v => f.snap = Math.max(1, v)), num('Độ đậm nền', () => f.bgOpacity ?? 0.9, v => f.bgOpacity = Math.min(1, Math.max(0, v)))));
+    pane.append(numCm('Khoảng cách an toàn quanh vùng tránh (cm)', () => f.margin || 0, v => f.margin = Math.max(0, v)));
+    pane.append(el('div', { class: 'btns' },
+      el('button', { onclick: () => { snapshot(); const r = C.avoidAll(S); toast(r.added ? `Đã chèn ${r.added} điểm để né` : (r.failed ? 'Không tìm được đường né' : 'Path không chạm vùng tránh')); changed(true); } }, '⛔ Tự né vùng tránh (cả path)'),
+      el('button', { onclick: () => { if (S.field.bg) { snapshot(); delete S.field.bg; setBg(); changed(false); } } }, 'Bỏ ảnh nền')));
+    pane.append(el('h3', {}, `Vùng trên sa bàn (${S.regions.length})`));
+    pane.append(el('div', { class: 'hint' }, 'Chọn mỗi vùng là ⛔ Tránh (xe không được đi vào) hoặc ★ Vật (mục tiêu). Bấm nút ▦ Vùng rồi chạm lên sân để chọn vùng, kéo trên sân để vẽ vùng mới.'));
+    if (selReg >= 0 && S.regions[selReg]) pane.append(regionEditor(S.regions[selReg], selReg));
+    if (S.regions.length) {
+      const groups = new Map(); S.regions.forEach((r, i) => { const g = r.name.replace(/\s+\d+$/, ''); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(i); });
+      for (const [g, ids] of groups) {
+        if (ids.length > 1) {
+          const all = k => () => { snapshot(); ids.forEach(i => S.regions[i].kind = k); changed(true); };
+          pane.append(el('div', { class: 'reg', style: 'margin-top:10px' }, el('span', { class: 'sw', style: `background:${S.regions[ids[0]].color}` }), el('b', { class: 'nm' }, `${g} (${ids.length}) — tất cả:`),
+            el('div', { class: 'seg' }, el('button', { onclick: all('none') }, 'Bỏ qua'), el('button', { onclick: all('avoid') }, '⛔'), el('button', { onclick: all('object') }, '★'))));
+        }
+        for (const i of ids) {
+          const r = S.regions[i];
+          pane.append(el('div', { class: 'reg' + (i === selReg ? ' sel' : '') }, el('span', { class: 'sw', style: `background:${r.color}` }),
+            el('span', { class: 'nm', onclick: () => { selReg = i; renderPane(); draw(); } }, `${r.name} · ${cm(r.w)}×${cm(r.h)}`), kindSeg(r)));
+        }
+      }
+      pane.append(el('div', { class: 'btns' }, el('button', { class: 'del', onclick: () => { snapshot(); S.regions = []; selReg = -1; changed(true); } }, 'Xoá tất cả vùng')));
+    }
   } else if (tab === 'set') {
-    const f = S.field, r = S.robot;
-    pane.append(el('h3', {}, 'Sân'));
-    pane.append(el('div', { class: 'row' }, num('Rộng W (mm)', () => f.w, v => { f.w = v; view.fitted = false; }), num('Cao H (mm)', () => f.h, v => { f.h = v; view.fitted = false; })));
-    pane.append(el('div', { class: 'row' }, num('Lưới (mm)', () => f.grid, v => f.grid = Math.max(10, v)), num('Bắt điểm (mm)', () => f.snap, v => f.snap = Math.max(1, v))));
-    pane.append(el('div', { class: 'btns' }, el('button', { onclick: () => $('#fImg').click() }, '🖼 Ảnh nền sân'), el('button', { onclick: () => { snapshot(); delete S.field.bg; setBg(); changed(false); } }, 'Bỏ ảnh nền'), el('button', { onclick: () => { fit(); draw(); } }, 'Vừa khung')));
-    pane.append(num('Độ đậm ảnh nền (0–1)', () => f.bgOpacity ?? 0.6, v => f.bgOpacity = Math.min(1, Math.max(0, v))));
-    pane.append(el('h3', {}, 'Robot'));
-    pane.append(el('div', { class: 'row' }, num('Dài (mm, trước–sau)', () => r.len, v => r.len = v), num('Rộng (mm, trái–phải)', () => r.wid, v => r.wid = v)));
+    const r = S.robot;
+    pane.append(el('h3', {}, 'Kích thước xe'));
+    pane.append(el('div', { class: 'row' }, numCm('Dài (cm, trước–sau)', () => r.len, v => r.len = Math.max(5, v)), numCm('Rộng (cm, trái–phải)', () => r.wid, v => r.wid = Math.max(5, v))));
+    pane.append(el('div', { class: 'hint' }, 'Tính cả cản/khung nhô ra. Phải khớp ROBOT_LEN_MM / ROBOT_WID_MM trong ORC_Robot.ino (đơn vị mm = cm × 10).'));
+    pane.append(numCm('Khoảng hở khi dừng trước vật (cm)', () => r.objGap, v => r.objGap = Math.max(0, v)));
     pane.append(el('h3', {}, 'Chuyển động'));
-    pane.append(el('div', { class: 'row' }, num('V max (mm/s)', () => r.vmax, v => r.vmax = Math.max(10, v)), num('A max (mm/s²)', () => r.amax, v => r.amax = Math.max(10, v))));
-    pane.append(el('div', { class: 'row' }, num('A ngang khi cua (mm/s²)', () => r.alat, v => r.alat = Math.max(10, v)), num('ω max (°/s)', () => r.wmax, v => r.wmax = Math.max(5, v))));
+    pane.append(el('div', { class: 'row' }, numCm('V max (cm/s)', () => r.vmax, v => r.vmax = Math.max(10, v)), numCm('A max (cm/s²)', () => r.amax, v => r.amax = Math.max(10, v))));
+    pane.append(el('div', { class: 'row' }, numCm('A ngang khi cua (cm/s²)', () => r.alat, v => r.alat = Math.max(10, v)), num('ω max (°/s)', () => r.wmax, v => r.wmax = Math.max(5, v))));
     pane.append(el('div', { class: 'row' }, num('Gia tốc quay (°/s²)', () => r.walpha, v => r.walpha = Math.max(10, v)), num('Chu kỳ mẫu (ms)', () => r.dt, v => r.dt = Math.min(100, Math.max(5, v)))));
     pane.append(el('h3', {}, 'Cơ cấu & cảm biến'));
-    pane.append(num('Tốc độ lift (mm/s, để mô phỏng)', () => r.liftSpeed, v => r.liftSpeed = Math.max(1, v)));
+    pane.append(numCm('Tốc độ lift (cm/s, để mô phỏng)', () => r.liftSpeed, v => r.liftSpeed = Math.max(1, v)));
     const ts = el('input'); ts.value = r.tofSides; ts.onchange = () => { snapshot(); r.tofSides = ts.value; changed(true); };
-    pane.append(el('label', { class: 'f' }, el('span', {}, 'Vị trí ToF theo thứ tự #0,#1,… (front/left/back/right) — phải khớp TOF_SIDE trong code'), ts));
-    pane.append(el('div', { class: 'hint' }, 'Giá trị Dài/Rộng, ToF phải khớp với phần CẤU HÌNH trong ORC_Robot.ino.'));
+    pane.append(el('label', { class: 'f' }, el('span', {}, 'Vị trí ToF theo thứ tự #0,#1,… (front/left/back/right) — khớp TOF_SIDE trong code'), ts));
   } else {
     pane.append(el('div', { class: 'kv' },
       el('span', {}, 'Thời gian ước tính'), el('b', {}, `${plan.T.toFixed(1)} s`),
       el('span', {}, 'Số mẫu quỹ đạo'), el('b', {}, `${plan.traj.length} (≈${(plan.traj.length * 24 / 1024).toFixed(1)} KB)`),
-      el('span', {}, 'Số bước'), el('b', {}, String(plan.steps.length))));
+      el('span', {}, 'Số bước'), el('b', {}, String(plan.steps.length)),
+      el('span', {}, 'Vùng tránh / vật'), el('b', {}, `${S.regions.filter(r => r.kind === 'avoid').length} / ${S.regions.filter(r => r.kind === 'object').length}`)));
     if (plan.warnings.length) plan.warnings.forEach(w => pane.append(el('div', { class: 'warn' }, '⚠ ' + w)));
     else pane.append(el('div', { class: 'okc', style: 'margin:6px 0' }, '✓ Không có cảnh báo'));
     pane.append(el('div', { class: 'btns' },
       el('button', { class: 'pri', onclick: () => dl('path_data.h', C.toHeader(S, plan), 'text/plain'), disabled: plan.traj.length ? null : '' }, '⬇ Tải path_data.h'),
       el('button', { onclick: async () => { try { await navigator.clipboard.writeText(C.toHeader(S, plan)); toast('Đã copy'); } catch (e) { toast('Không copy được'); } } }, '📋 Copy .h'),
-      el('button', { onclick: () => dl(`${S.name}.json`, JSON.stringify(S, null, 1), 'application/json') }, '💾 Lưu JSON'),
+      el('button', { onclick: () => dl(`${S.name}.json`, JSON.stringify(S), 'application/json') }, '💾 Lưu JSON'),
       el('button', { onclick: () => $('#fJson').click() }, '📂 Mở JSON')));
     pane.append(el('h3', {}, 'Biến đổi'));
     pane.append(el('div', { class: 'btns' },
       el('button', { onclick: () => { snapshot(); C.mirror(S, 'x'); changed(true); } }, '⇋ Lật trái/phải'),
       el('button', { onclick: () => { snapshot(); C.mirror(S, 'y'); changed(true); } }, '⇵ Lật trên/dưới'),
-      el('button', { class: 'del', onclick: () => { if (confirmBox()) { snapshot(); S = C.defaultState(); sel = -1; $('#pname').value = S.name; setBg(); changed(true); } } }, 'Tạo path mới')));
+      el('button', { class: 'del', onclick: () => { if (confirmBox()) { snapshot(); const keep = { field: S.field, regions: S.regions, robot: S.robot }; S = C.normalize(Object.assign(C.defaultState(), keep)); sel = -1; $('#pname').value = S.name; changed(true); } } }, 'Path mới (giữ sa bàn)')));
     pane.append(el('h3', {}, 'Xem trước path_data.h'));
-    const txt = C.toHeader(S, plan).split('\n'); const pv = txt.slice(0, 32).concat(txt.length > 50 ? ['  ...'] : [], txt.slice(-(Math.min(14, txt.length - 32)))).join('\n');
-    pane.append(el('pre', {}, plan.traj.length ? pv : '(chưa có)'));
+    const txt = C.toHeader(S, plan).split('\n');
+    pane.append(el('pre', {}, plan.traj.length ? txt.slice(0, 32).concat(['  ...'], txt.slice(-14)).join('\n') : '(chưa có)'));
   }
 }
 let confirmArm = 0;
-function confirmBox() { const now = Date.now(); if (now - confirmArm < 3000) return true; confirmArm = now; toast('Bấm lần nữa để xoá path hiện tại'); return false; }
-function toast(m) { const t = el('div', { style: 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#111;color:#fff;padding:8px 14px;border-radius:8px;z-index:20' }, m); document.body.append(t); setTimeout(() => t.remove(), 1800); }
+function confirmBox() { const now = Date.now(); if (now - confirmArm < 3000) return true; confirmArm = now; toast('Bấm lần nữa để xác nhận'); return false; }
+function toast(m) { const t = el('div', { style: 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#111;color:#fff;padding:8px 14px;border-radius:8px;z-index:40;max-width:90vw' }, m); document.body.append(t); setTimeout(() => t.remove(), 2200); }
 function dl(name, text, type) { const a = el('a', { href: URL.createObjectURL(new Blob([text], { type })), download: name }); document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); }
-$('#fJson').onchange = e => { const f = e.target.files[0]; if (!f) return; f.text().then(t => { try { const j = JSON.parse(t); if (!j.points) throw 0; snapshot(); S = Object.assign(C.defaultState(), j); $('#pname').value = S.name; sel = -1; view.fitted = false; resize(); setBg(); changed(true); toast('Đã mở'); } catch (er) { toast('File JSON không hợp lệ'); } }); e.target.value = ''; };
-$('#fImg').onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { snapshot(); S.field.bg = rd.result; setBg(); changed(false); }; rd.readAsDataURL(f); e.target.value = ''; };
+
+// ---------- nhập sa bàn ----------
+function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Không tải được ' + src)); document.head.append(s); }); }
+async function pdfjs() {
+  if (!window.pdfjsLib) {
+    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+  return window.pdfjsLib;
+}
+// Vẽ nguồn (canvas/ảnh) về kích thước w×h
+function toCanvas(src, w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(src, 0, 0, w, h); return c; }
+function applyMap(srcCanvas, Wmm, Hmm) {
+  const aspect = srcCanvas.width / srcCanvas.height;
+  const dw = Math.min(1800, srcCanvas.width), dh = Math.round(dw / aspect);
+  const bg = toCanvas(srcCanvas, dw, dh).toDataURL('image/jpeg', 0.85);
+  const kw = 900, kh = Math.round(kw / aspect);
+  const det = toCanvas(srcCanvas, kw, kh).getContext('2d').getImageData(0, 0, kw, kh);
+  const regs = C.detectRegions(det, Wmm, Hmm);
+  snapshot();
+  S.field.w = Math.round(Wmm); S.field.h = Math.round(Hmm); S.field.bg = bg;
+  const manual = S.regions.filter(r => /^Vùng vẽ/.test(r.name));
+  S.regions = regs.concat(manual); selReg = -1;
+  view.fitted = false; setBg(); resize(); changed(true);
+  toast(`Sân ${cm(S.field.w)}×${cm(S.field.h)} cm · nhận được ${regs.length} vùng`);
+}
+async function importMap(file) {
+  busy(true);
+  try {
+    if (/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)) {
+      const lib = await pdfjs();
+      const pdf = await lib.getDocument({ data: await file.arrayBuffer() }).promise;
+      const page = await pdf.getPage(1);
+      const vp1 = page.getViewport({ scale: 1 });
+      const Wmm = vp1.width * 25.4 / 72, Hmm = vp1.height * 25.4 / 72;
+      const scale = 1800 / Math.max(vp1.width, vp1.height);
+      const vp = page.getViewport({ scale });
+      const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: g, viewport: vp }).promise;
+      applyMap(c, Wmm, Hmm);
+    } else {
+      const url = URL.createObjectURL(file);
+      const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+      const Wmm = S.field.w, Hmm = Math.round(S.field.w * im.naturalHeight / im.naturalWidth);
+      applyMap(toCanvas(im, im.naturalWidth, im.naturalHeight), Wmm, Hmm);
+      URL.revokeObjectURL(url);
+    }
+  } catch (e) { console.error(e); toast('Không đọc được file: ' + e.message); }
+  busy(false);
+}
+async function loadPreset() {
+  busy(true);
+  try {
+    const j = await (await fetch('examples/orc-2026-sa-ban.json')).json();
+    snapshot(); S.field = Object.assign(S.field, j.field); S.regions = j.regions; selReg = -1;
+    view.fitted = false; setBg(); resize(); changed(true); toast(`Đã nạp sa bàn ORC 2026 (${S.regions.length} vùng)`);
+  } catch (e) { toast('Không tải được sa bàn có sẵn — hãy nhập file PDF'); }
+  busy(false);
+}
+$('#fMap').onchange = e => { const f = e.target.files[0]; if (f) importMap(f); e.target.value = ''; };
+$('#fJson').onchange = e => { const f = e.target.files[0]; if (!f) return; f.text().then(t => { try { const j = JSON.parse(t); if (!j.points) throw 0; snapshot(); S = C.normalize(Object.assign(C.defaultState(), j)); $('#pname').value = S.name; sel = -1; selReg = -1; view.fitted = false; setBg(); resize(); changed(true); toast('Đã mở'); } catch (er) { toast('File JSON không hợp lệ'); } }); e.target.value = ''; };
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
+  if ((e.key === 'Delete' || e.key === 'Backspace') && mode === 'reg' && selReg >= 0) { snapshot(); S.regions.splice(selReg, 1); selReg = -1; changed(true); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sel >= 0) { snapshot(); S.points.splice(sel, 1); sel = Math.min(sel, S.points.length - 1); changed(true); }
   if (e.key === 'z' && (e.ctrlKey || e.metaKey)) $('#undo').click();
   if (e.key === ' ') { e.preventDefault(); $('#play').click(); }
