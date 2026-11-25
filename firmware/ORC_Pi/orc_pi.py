@@ -33,6 +33,7 @@ import time
 
 import serial
 from smbus2 import SMBus
+from web_ui import install_log_tee, start_web
 import evdev
 from evdev import ecodes
 
@@ -42,6 +43,7 @@ from evdev import ecodes
 SERIAL_PORT = "/dev/serial0"
 SERIAL_BAUD = 921600
 IMU_BUS = 3                         # bus I2C phần mềm riêng GPIO5/6 (dtoverlay=i2c-gpio,bus=3,...), tách khỏi ESP32
+WEB_PORT = 8080                    # trang giám sát http://<tên-máy>.local:8080 ; 0 = tắt
 IMU_TYPE = "mpu6050"               # "mpu6050" hoặc "bmi160"
 MPU6050_ADDR = 0x68                # 0x69 nếu chân AD0 nối 3V3
 BMI160_ADDR = 0x69                 # 0x68 nếu SDO nối GND
@@ -407,6 +409,11 @@ class Robot:
         self.cal_nb = 0
         self.cal_done_t = 0.0
         self.seen_resets = 0
+        self.imu_n = 0                 # đếm mẫu để tính tần số đọc IMU (hiển thị trên trang web)
+        self.imu_hz = 0.0
+        self.imu_t0 = time.monotonic()
+        self.imu_temp = float("nan")
+        self.imu_temp_t = 0.0
         self.last_mouse = (0, 0)
         self.flow_last_yaw = 0.0
         self.last_motion = 0.0
@@ -466,6 +473,13 @@ class Robot:
             return
         gx, gy, gz, ax, ay, az = s
         mono = time.monotonic()
+        self.imu_n += 1
+        if mono - self.imu_t0 >= 1.0:
+            self.imu_hz = self.imu_n / (mono - self.imu_t0)
+            self.imu_n, self.imu_t0 = 0, mono
+        if mono - self.imu_temp_t >= 2.0:      # đọc nhiệt độ ở luồng chính (không đọc từ luồng web, tránh 2 luồng chung bus I2C)
+            self.imu_temp_t = mono
+            self.imu_temp = self.imu.read_temp()
         if self.calibrating:
             self.ahrs.update(0, 0, 0, ax, ay, az, dt, 8.0, True)       # gom tư thế nghiêng nhanh khi đứng yên
             el = mono - self.cal_start - CAL_SKIP_S
@@ -621,7 +635,10 @@ def main():
     except (PermissionError, AttributeError, OSError):
         pass
 
+    install_log_tee()
     bot = Robot()
+    if WEB_PORT:
+        start_web(bot, WEB_PORT)
     print("ORC_Pi sẵn sàng, UART %s %d baud. Giữ yên xe ~%.1f s để đo bias gyro." % (SERIAL_PORT, SERIAL_BAUD, CAL_S))
     pkt = bot.packet()
     last_print = 0.0

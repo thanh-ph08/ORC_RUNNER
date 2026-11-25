@@ -156,6 +156,8 @@ Hub Ohstem **driverV2** (I2C 0x54) với thư viện OhStemRobotics: servo 1 = g
    ```
 9. **Cập nhật code sau này**: `cd ~/ORC_RUNNER && git pull`, rồi `sudo systemctl restart orc-pi`.
 
+**Trang web giám sát (tự chạy cùng `orc_pi.py`)**: mở trên điện thoại hoặc máy tính cùng mạng Wi-Fi với Pi: `http://<tên-máy>.local:8080` (ví dụ `http://rpiorz.local:8080`) hoặc `http://<IP của Pi>:8080`. Trang hiện x, y, yaw, bộ đếm chuột, nhiệt độ và tần số IMU, số lỗi (nhiễu / lỗi I2C / reset), quỹ đạo xe và log (có nút tải log). Trang chỉ đọc, không điều khiển robot, không có mật khẩu nên chỉ dùng trong mạng nội bộ. Đổi cổng hoặc tắt bằng `WEB_PORT` đầu `orc_pi.py` (`0` = tắt). Code ở `web_ui.py`.
+
 Nếu lỗi: không mở được `/dev/serial0` thì làm lại bước 2–3; không thấy chuột thì chạy bằng `sudo`; `i2cdetect -y 3` không thấy BMI160 thì kiểm tra dây SDA/SCL (GPIO5/6) và nguồn 3V3.
 
 ## 5. Tay cầm
