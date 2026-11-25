@@ -9,7 +9,7 @@
  *   !! vượt mức chịu của chân ESP32 (3.3V). Chân A/B dùng INPUT_PULLUP nội; nếu xung yếu/nhiễu thì thêm trở 10k kéo lên 3.3V.
  *
  * Board: "ESP32 Dev Module" (core esp32 của Espressif hoặc esp32_bluepad32 đều được).
- * Chân I2C: SDA 21, SCL 22 (nối chung bus với ESP32#1, RPi, hub Ohstem; cần trở kéo lên 3.3V trên bus).
+ * Chân I2C: SDA 11, SCL 12 (nối chung bus với ESP32#1, RPi, hub Ohstem; cần trở kéo lên 3.3V trên bus).
  *
  * Đọc x4 (cả 2 cạnh của cả 2 kênh) => 400 count / vòng. ESP32#2 chỉ đếm + tính tốc độ (count/s);
  * đổi sang rpm / mm do ESP32#1 làm (config.h).
@@ -22,7 +22,7 @@
 // (Chân tạm — sửa lại cho đúng dây của bạn.)
 const int SHOOTER_PIN_A = 32, SHOOTER_PIN_B = 33;
 const int LIFT_PIN_A    = 25, LIFT_PIN_B    = 26;
-const int I2C_SDA = 21, I2C_SCL = 22;
+const int I2C_SDA = 11, I2C_SCL = 12;   // ESP32#2: SDA = GPIO11, SCL = GPIO12 (ESP32#1 vẫn dùng 21/22, mỗi board chọn chân riêng)
 const uint32_t I2C_CLOCK = 100000;     // khớp ESP32#1
 
 const uint32_t VEL_PERIOD_MS = 10;      // chu kỳ tính tốc độ
@@ -83,6 +83,11 @@ void setup() {
   quadBegin(shooterEnc);
   quadBegin(liftEnc);
 
+#if defined(CONFIG_IDF_TARGET_ESP32)
+  // ESP32 thường: GPIO6–11 nối với flash của chip, dùng làm I2C sẽ làm board treo/khởi động lại liên tục.
+  if ((I2C_SDA >= 6 && I2C_SDA <= 11) || (I2C_SCL >= 6 && I2C_SCL <= 11))
+    Serial.println("!! CẢNH BÁO: GPIO6–11 là chân flash của ESP32 thường. Đổi I2C_SDA/I2C_SCL sang 21/22.");
+#endif
   Wire.onReceive(onReceiveCb);
   Wire.onRequest(onRequestCb);
   bool i2cOk = Wire.begin((uint8_t)ORC_ADDR_ENCODER, I2C_SDA, I2C_SCL, I2C_CLOCK);

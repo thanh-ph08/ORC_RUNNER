@@ -80,7 +80,7 @@ Hệ toạ độ: gốc ở góc dưới-trái sân, x sang phải, y lên trên
 
 ## 3. Phần cứng và đấu dây
 
-Kiến trúc: ESP32#1 là I2C master (SDA 21, SCL 22), chung bus với ESP32#2 (0x42) và hub Ohstem driverV2 (0x54). Raspberry Pi nối ESP32#1 bằng **UART** (921600 baud), không đi qua I2C. Cần trở kéo lên 3.3V (2.2k–4.7k) trên SDA/SCL, GND chung tất cả.
+Kiến trúc: ESP32#1 là I2C master (SDA 21, SCL 22), chung bus với ESP32#2 (0x42, chân SDA 11 / SCL 12 của ESP32#2) và hub Ohstem driverV2 (0x54). Raspberry Pi nối ESP32#1 bằng **UART** (921600 baud), không đi qua I2C. Cần trở kéo lên 3.3V (2.2k–4.7k) trên SDA/SCL, GND chung tất cả.
 
 ### Motor — 4 mạch L298N, PWM trên IN, jumper ENA/ENB giữ nguyên
 | Mạch | IN1 IN2 IN3 IN4 (ESP32#1) | Motor |
