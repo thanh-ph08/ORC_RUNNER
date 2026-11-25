@@ -1,5 +1,5 @@
 /*
- * Odometry.h — đọc toạ độ x, y, yaw từ Pico qua I2C (Pico lo BMI160 + chuột optical flow)
+ * Odometry.h — đọc toạ độ x, y, yaw từ RPi qua I2C (RPi lo BMI160 + chuột optical flow)
  */
 #pragma once
 #include <Wire.h>
@@ -43,7 +43,7 @@ static bool flowSend(const uint8_t *data, size_t len) {
   return false;
 }
 
-// Đặt toạ độ (cả trên Pico lẫn bản sao ở ESP32#1)
+// Đặt toạ độ (cả trên RPi lẫn bản sao ở ESP32#1)
 void setPose(float x, float y, float th) {
   poseX = x; poseY = y; poseTh = th;
   uint8_t buf[13];
@@ -54,14 +54,14 @@ void setPose(float x, float y, float th) {
     poseAwaitAck = true;
     poseAwaitMs = millis();
   } else {
-    Serial.println("[POSE] Không gửi được lệnh đặt toạ độ tới Pico!");
+    Serial.println("[POSE] Không gửi được lệnh đặt toạ độ tới RPi!");
   }
 }
 void resetPoseToStart() {
   setPose(START_X_MM, START_Y_MM, START_TH_RAD);
   Serial.println("[POSE] Đặt lại về điểm xuất phát");
 }
-void flowCalibrateGyro() { uint8_t c = FLOW_CMD_CAL_GYRO; flowSend(&c, 1); Serial.println("[POSE] Pico đo lại gyro: GIỮ YÊN XE ~2 s"); }
+void flowCalibrateGyro() { uint8_t c = FLOW_CMD_CAL_GYRO; flowSend(&c, 1); Serial.println("[POSE] RPi đo lại gyro: GIỮ YÊN XE ~2 s"); }
 void flowClearRaw()      { uint8_t c = FLOW_CMD_CLEAR_RAW; flowSend(&c, 1); }
 
 // Gọi mỗi vòng điều khiển
@@ -74,8 +74,8 @@ void odometryUpdate() {
   poseAckSeen = p.setAck;
   if (poseAwaitAck) {
     if (p.setAck == poseAckWanted) poseAwaitAck = false;
-    else if (millis() - poseAwaitMs > 200) { poseAwaitAck = false; Serial.println("[POSE] Pico không xác nhận lệnh đặt toạ độ"); }
-    else return;                                   // gói cũ, chờ Pico áp dụng toạ độ mới
+    else if (millis() - poseAwaitMs > 200) { poseAwaitAck = false; Serial.println("[POSE] RPi không xác nhận lệnh đặt toạ độ"); }
+    else return;                                   // gói cũ, chờ RPi áp dụng toạ độ mới
   }
   poseX = p.x; poseY = p.y; poseTh = p.yaw;
   velX = p.vx; velY = p.vy; gyroRate = p.w;

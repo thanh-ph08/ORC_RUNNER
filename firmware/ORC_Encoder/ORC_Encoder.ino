@@ -9,7 +9,7 @@
  *   !! vượt mức chịu của chân ESP32 (3.3V). Chân A/B dùng INPUT_PULLUP nội; nếu xung yếu/nhiễu thì thêm trở 10k kéo lên 3.3V.
  *
  * Board: "ESP32 Dev Module" (core esp32 của Espressif hoặc esp32_bluepad32 đều được).
- * Chân I2C: SDA 21, SCL 22 (nối chung bus với ESP32#1, Pico, hub Ohstem; cần trở kéo lên 3.3V trên bus).
+ * Chân I2C: SDA 21, SCL 22 (nối chung bus với ESP32#1, RPi, hub Ohstem; cần trở kéo lên 3.3V trên bus).
  *
  * Đọc x4 (cả 2 cạnh của cả 2 kênh) => 400 count / vòng. ESP32#2 chỉ đếm + tính tốc độ (count/s);
  * đổi sang rpm / mm do ESP32#1 làm (config.h).

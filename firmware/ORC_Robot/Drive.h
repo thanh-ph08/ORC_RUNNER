@@ -1,6 +1,6 @@
 /*
  * Drive.h — di chuyển 4 bánh mecanum (4 motor qua L298N #1, #2)
- * Xe không có encoder bánh: dùng feedforward PWM = KS + KV*|v|; vị trí lấy từ Pico (chuột optical flow + BMI160).
+ * Xe không có encoder bánh: dùng feedforward PWM = KS + KV*|v|; vị trí lấy từ RPi (chuột optical flow + BMI160).
  * Hệ robot: x = phía trước, y = bên trái, w ngược chiều kim đồng hồ.
  */
 #pragma once
@@ -45,7 +45,7 @@ void driveRobot(float vx, float vy, float w) {
   }
 }
 
-// Lệnh vận tốc hệ SÂN (dùng yaw từ Pico)
+// Lệnh vận tốc hệ SÂN (dùng yaw từ RPi)
 void driveField(float vx, float vy, float w) {
   float c = cosf(poseTh), s = sinf(poseTh);
   driveRobot(c * vx + s * vy, -s * vx + c * vy, w);

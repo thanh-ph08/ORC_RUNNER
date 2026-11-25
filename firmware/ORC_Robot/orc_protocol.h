@@ -1,10 +1,10 @@
 /*
- * orc_protocol.h — giao thức I2C giữa 3 board. FILE NÀY GIỐNG HỆT NHAU ở 3 thư mục
- * (ORC_Robot, ORC_Encoder, ORC_Pico). Sửa một chỗ thì chép sang 2 chỗ còn lại.
+ * orc_protocol.h — giao thức I2C giữa 3 board. FILE NÀY GIỐNG HỆT NHAU ở 2 thư mục
+ * (ORC_Robot, ORC_Encoder). Bản Python của Pi (ORC_Pi/orc_pi.py) tự khai báo lại cùng giao thức; sửa ở đây thì sửa cả ở đó.
  *
  *   ESP32#1 (ORC_Robot)   = I2C MASTER, đọc mọi thứ, điều khiển motor
  *   ESP32#2 (ORC_Encoder) = I2C slave 0x42, đọc 2 encoder (bắn banh + nâng hạ)
- *   Pico    (ORC_Pico)    = I2C slave 0x43, BMI160 + chuột optical flow => toạ độ x, y, yaw
+ *   RPi     (ORC_Pi)      = I2C slave 0x43, BMI160 + chuột optical flow => toạ độ x, y, yaw
  *   Hub Ohstem driverV2   = I2C slave 0x54, chỉ dùng cho servo (thư viện OhStemRobotics)
  *
  * Mọi số nhiều byte là little-endian (ESP32 và RP2040 đều little-endian nên chép thẳng struct).
@@ -21,7 +21,7 @@
 #define ENC_CMD_RESET_LIFT    2
 #define ENC_CMD_RESET_ALL     3
 
-// ---- Pico: master ghi byte lệnh đầu tiên ----
+// ---- RPi: master ghi byte lệnh đầu tiên ----
 #define FLOW_CMD_SET_POSE   0x10   // + float x_mm, float y_mm, float yaw_rad  (đặt toạ độ)
 #define FLOW_CMD_CAL_GYRO   0x11   // đo lại độ lệch gyro (xe phải đứng yên ~1.5 s)
 #define FLOW_CMD_CLEAR_RAW  0x12   // xoá bộ đếm thô (rawX, rawY, gyroDeg) để hiệu chỉnh
@@ -43,7 +43,7 @@ struct EncoderPacket {           // 18 byte
 struct PosePacket {              // 40 byte
   uint8_t seq;
   uint8_t flags;                 // POSE_FLAG_*
-  uint8_t setAck;                // tăng 1 mỗi lần Pico nhận xong lệnh SET_POSE
+  uint8_t setAck;                // tăng 1 mỗi lần RPi nhận xong lệnh SET_POSE
   float x, y, yaw;               // mm, mm, rad — hệ sân, yaw ngược chiều kim đồng hồ
   float vx, vy, w;               // mm/s, mm/s (hệ sân), rad/s
   int32_t rawX, rawY;            // số đếm chuột thô (để hiệu chỉnh mm/count)

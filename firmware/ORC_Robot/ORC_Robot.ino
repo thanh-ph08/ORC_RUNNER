@@ -5,7 +5,7 @@
  *   config.h     chân + hằng số hiệu chỉnh (chỉ sửa chỗ này)
  *   Motors.h     L298N × 4 (PWM trên IN1/IN2)
  *   Drive.h      4 bánh mecanum
- *   Odometry.h   toạ độ x, y, yaw từ Pico (chuột optical flow + BMI160)
+ *   Odometry.h   toạ độ x, y, yaw từ RPi (chuột optical flow + BMI160)
  *   Encoders.h   encoder từ ESP32#2
  *   Intake.h     hút bóng
  *   Shooter.h    bắn banh, PID tốc độ
@@ -16,7 +16,7 @@
  *
  * Thư viện: OhStemRobotics (https://github.com/truongphat2307/ohstem-orc-hub-robotics, chép vào Arduino/libraries)
  * Serial 115200: r = về điểm xuất phát, a = chạy tự động, s = dừng, t = bật/tắt in toạ độ,
- *   f = in số đếm chuột thô, g = in góc gyro cộng dồn, z = xoá bộ đếm hiệu chỉnh, c = Pico đo lại gyro,
+ *   f = in số đếm chuột thô, g = in góc gyro cộng dồn, z = xoá bộ đếm hiệu chỉnh, c = RPi đo lại gyro,
  *   e = in count encoder, l = đặt lift 0 mm tại chỗ, +/- = tốc độ bắn ± 100 rpm, x = bật/tắt bắn
  */
 #include <Arduino.h>
@@ -76,7 +76,7 @@ static void telemetry() {
                 gripClosed ? "đóng" : "mở", guideSpeedPct,
                 (unsigned long)poseErrCount, (unsigned long)encErrCount,
                 robotMode == RM_AUTO ? "AUTO" : "MAN", autoStatus());
-  if (!poseFresh()) Serial.println("  ! mất Pico (toạ độ)");
+  if (!poseFresh()) Serial.println("  ! mất RPi (toạ độ)");
   if (!encFresh()) Serial.println("  ! mất ESP32#2 (encoder)");
 }
 

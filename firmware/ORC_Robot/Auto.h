@@ -2,7 +2,7 @@
  * Auto.h — CHẠY TỰ ĐỘNG theo path_data.h (tạo bởi app ORC Path Planner)
  *
  * Mỗi bước trong STEPS[]:
- *   FOLLOW  : bám quỹ đạo TRAJ[a..b] = feedforward vận tốc + PID vị trí x, y, θ (toạ độ từ Pico)
+ *   FOLLOW  : bám quỹ đạo TRAJ[a..b] = feedforward vận tốc + PID vị trí x, y, θ (toạ độ từ RPi)
  *   LIFT    : đưa lift tới p1 mm (PID encoder), chờ hoặc chạy song song
  *   WAIT    : chờ p1 ms
  *   WALL    : chạy chậm vào tường (công tắc chạm hoặc theo thời gian) => đặt lại toạ độ + góc
@@ -14,7 +14,7 @@
  *
  * Không có encoder bánh nên quỹ đạo có "đồng hồ co giãn": robot tụt lại xa điểm đích
  * thì đồng hồ chạy chậm lại / dừng, chờ robot bắt kịp (không bị cắt góc).
- * Mất tín hiệu Pico (toạ độ) => dừng ngay.
+ * Mất tín hiệu RPi (toạ độ) => dừng ngay.
  */
 #pragma once
 #include "path_data.h"
@@ -134,8 +134,8 @@ void poseControl(float tx, float ty, float tth, float ffx, float ffy, float ffw,
 // ============================ ĐIỀU KHIỂN =============================
 void startAuto() {
   if (STEP_COUNT == 0) { Serial.println("[AUTO] path_data.h trống"); return; }
-  if (!poseFresh()) { Serial.println("[AUTO] Không bắt đầu: chưa có toạ độ từ Pico"); return; }
-  if (poseFlags & POSE_FLAG_CALIBRATING) { Serial.println("[AUTO] Không bắt đầu: Pico đang cân gyro, giữ yên xe"); return; }
+  if (!poseFresh()) { Serial.println("[AUTO] Không bắt đầu: chưa có toạ độ từ RPi"); return; }
+  if (poseFlags & POSE_FLAG_CALIBRATING) { Serial.println("[AUTO] Không bắt đầu: RPi đang cân gyro, giữ yên xe"); return; }
   if (AUTO_RESET_POSE_ON_START) setPose(START_X_MM, START_Y_MM, START_TH_RAD);
   robotMode = RM_AUTO;
   autoStep = 0;
@@ -252,7 +252,7 @@ void autoUpdate(float dt) {
   if (padNow.ok && (fabsf(padNow.lx) > 0.7f || fabsf(padNow.ly) > 0.7f || fabsf(padNow.rx) > 0.7f)) {
     stopAuto("người lái gạt cần"); return;
   }
-  if (!poseFresh()) { stopAuto("mất toạ độ từ Pico"); return; }
+  if (!poseFresh()) { stopAuto("mất toạ độ từ RPi"); return; }
   if (asyncCustomId >= 0 && runCustomAction(asyncCustomId, asyncCustomParam, false)) asyncCustomId = -1;
   if (autoPhase == AP_DONE) { stopAuto("xong path"); return; }
 

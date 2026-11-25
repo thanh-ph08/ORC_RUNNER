@@ -24,7 +24,7 @@ const int  PWM_BITS = 10;
 const int  PWM_MAX  = 1023;
 
 // =====================================================================
-// ===== I2C (ESP32#1 là master): Pico, ESP32#2, hub Ohstem cùng 1 bus =====
+// ===== I2C (ESP32#1 là master): RPi, ESP32#2, hub Ohstem cùng 1 bus =====
 // Cần trở kéo lên 3.3V (2.2k–4.7k) trên SDA/SCL. Nếu hay lỗi đọc, hạ I2C_CLOCK xuống 100000.
 // =====================================================================
 const int      I2C_SDA = 21, I2C_SCL = 22;

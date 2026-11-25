@@ -1,0 +1,418 @@
+#!/usr/bin/env python3
+"""
+orc_pi.py — Raspberry Pi 3B+ : I2C SLAVE 0x43 nói chuyện với ESP32#1 (giao thức xem orc_protocol.h).
+
+Việc của Pi:
+  1. Đọc BMI160 (I2C bus 1, GPIO2/3) -> bộ lọc Mahony (gyro + gia tốc) -> góc YAW
+  2. Đọc chuột USB (optical flow) bằng evdev -> dịch chuyển (count)
+  3. Ghép: dùng yaw để (a) xoay dịch chuyển từ hệ xe sang hệ sân, (b) trừ phần chuyển động giả khi xe XOAY mà chuột
+     không gắn đúng tâm quay (FLOW_POS_X/Y_MM) => toạ độ x, y, yaw (hệ sân)
+  4. Phát PosePacket cho ESP32#1 qua I2C slave (BSC của BCM2837, điều khiển bằng pigpio)
+
+====== Cài đặt (Raspberry Pi OS) ======
+  sudo apt install -y pigpio python3-pigpio python3-smbus2 python3-evdev      (hoặc pip install pigpio smbus2 evdev)
+  sudo raspi-config  -> Interface Options -> I2C = Enable
+  Thêm vào /boot/firmware/config.txt (hoặc /boot/config.txt):   dtparam=i2c_arm=on,i2c_arm_baudrate=400000
+  sudo systemctl enable --now pigpiod
+  sudo python3 orc_pi.py            (cần root để đọc /dev/input và dùng BSC)
+
+====== Đấu dây (đánh số theo GPIO/BCM) ======
+  I2C slave (nối ESP32#1):  SDA = GPIO18 (chân 12), SCL = GPIO19 (chân 35), GND chung.
+        Đây là cặp chân BSC cố định của Pi 3; bus chung với ESP32#2 + hub Ohstem, trở kéo lên 3.3V nằm ngoài (2.2k–4.7k).
+        Logic 3.3V cả hai phía, không cần dịch mức.
+  BMI160 (I2C1):  SDA = GPIO2 (chân 3), SCL = GPIO3 (chân 5), 3V3, GND. Nằm PHẲNG, trục Z hướng LÊN.
+        SDO nối GND => 0x68, nối 3V3 => 0x69.
+  Chuột: cắm vào cổng USB của Pi. Dùng chuột optical (không phải laser), 800–1600 CPI, gắn cách mặt sân 1–3 mm.
+
+Gõ Ctrl+C để thoát. Mỗi 0,5 s in toạ độ ra màn hình.
+"""
+import math
+import os
+import struct
+import sys
+import threading
+import time
+
+import pigpio
+from smbus2 import SMBus
+import evdev
+from evdev import ecodes
+
+# =====================================================================
+# ============================ CẤU HÌNH ===============================
+# =====================================================================
+I2C_SLAVE_ADDR = 0x43
+IMU_BUS = 1
+BMI160_ADDR = 0x69                 # 0x68 nếu SDO nối GND
+
+# ---- Chuột optical flow ----
+MOUSE_DEVICE = None                # None = tự tìm chuột; hoặc "/dev/input/event3"
+FLOW_MM_PER_COUNT = 0.60           # HIỆU CHỈNH: đẩy xe đúng 1000 mm, đọc rawX/rawY ('f' ở ESP32#1), lấy 1000 / số đếm
+FLOW_SWAP_XY = False               # đẩy xe TỚI mà số đếm tăng ở trục y => True
+FLOW_SIGN_X, FLOW_SIGN_Y = 1, 1    # đẩy TỚI phải ra x dương, đẩy sang TRÁI phải ra y dương
+FLOW_POS_X_MM, FLOW_POS_Y_MM = 0.0, 0.0   # vị trí chuột so với TÂM QUAY (x trước, y trái) — đo bằng thước
+FLOW_MAX_JUMP_MM = 40.0            # bỏ qua dịch chuyển nhảy bất thường trong 1 chu kỳ
+
+# ---- BMI160 ----
+GYRO_SIGN = 1                      # quay xe NGƯỢC chiều kim đồng hồ (nhìn từ trên) mà yaw GIẢM => -1
+GYRO_SCALE = 1.000                 # HIỆU CHỈNH: quay xe đúng 10 vòng, đọc gyroDeg ('g'), lấy 3600 / số độ
+MAHONY_KP = 1.5                    # độ tin gia tốc kế (chỉ sửa nghiêng); 0.5–5
+ACCEL_G_MIN, ACCEL_G_MAX = 0.85, 1.15   # chỉ tin gia tốc khi |a| ≈ 1 g
+CAL_S = 1.5                        # thời gian đo độ lệch gyro lúc bật / khi có lệnh
+
+IMU_PERIOD = 0.002                 # 500 Hz (Python thực tế có thể thấp hơn, dt được đo thật)
+FLOW_PERIOD = 0.005
+PKT_PERIOD = 0.004
+
+# ---- Giao thức (khớp orc_protocol.h) ----
+FLOW_CMD_SET_POSE = 0x10
+FLOW_CMD_CAL_GYRO = 0x11
+FLOW_CMD_CLEAR_RAW = 0x12
+POSE_FLAG_IMU_OK = 0x01
+POSE_FLAG_MOUSE_OK = 0x02
+POSE_FLAG_CALIBRATING = 0x04
+POSE_FMT = "<BBB6f2ifB"            # seq, flags, setAck, x y yaw vx vy w, rawX rawY, gyroDeg, crc  = 40 byte
+assert struct.calcsize(POSE_FMT) == 40
+
+
+def crc8(data: bytes) -> int:
+    c = 0
+    for b in data:
+        c ^= b
+        for _ in range(8):
+            c = ((c << 1) ^ 0x07) & 0xFF if c & 0x80 else (c << 1) & 0xFF
+    return c
+
+
+def wrap_pi(a: float) -> float:
+    while a > math.pi:
+        a -= 2 * math.pi
+    while a < -math.pi:
+        a += 2 * math.pi
+    return a
+
+
+# =====================================================================
+# ============================== BMI160 ===============================
+# =====================================================================
+class Bmi160:
+    def __init__(self, bus_no=IMU_BUS, addr=BMI160_ADDR):
+        self.bus = SMBus(bus_no)
+        self.addr = addr
+
+    def begin(self) -> bool:
+        try:
+            cid = self.bus.read_byte_data(self.addr, 0x00)
+        except OSError as e:
+            print(f"[IMU] Không đọc được BMI160: {e}")
+            return False
+        if cid != 0xD1:
+            print(f"[IMU] Sai ID 0x{cid:02X}, cần 0xD1")
+            return False
+        w = lambda r, v: self.bus.write_byte_data(self.addr, r, v)
+        w(0x7E, 0xB6); time.sleep(0.1)     # soft reset
+        w(0x7E, 0x11); time.sleep(0.02)    # accel normal
+        w(0x7E, 0x15); time.sleep(0.1)     # gyro normal
+        w(0x40, 0x2B)                      # ACC_CONF 800 Hz
+        w(0x41, 0x05)                      # ±4 g   (8192 LSB/g)
+        w(0x42, 0x2B)                      # GYR_CONF 800 Hz
+        w(0x43, 0x01)                      # ±1000 dps (32.8 LSB/dps)
+        time.sleep(0.05)
+        return True
+
+    def read(self):
+        """-> (gx, gy, gz [dps], ax, ay, az [g]) hoặc None"""
+        try:
+            b = self.bus.read_i2c_block_data(self.addr, 0x0C, 12)
+        except OSError:
+            return None
+        v = struct.unpack("<6h", bytes(b))
+        return (v[0] / 32.8, v[1] / 32.8, v[2] / 32.8, v[3] / 8192.0, v[4] / 8192.0, v[5] / 8192.0)
+
+
+# =====================================================================
+# ======================== BỘ LỌC MAHONY 6 TRỤC =======================
+# =====================================================================
+class Mahony:
+    def __init__(self):
+        self.q0, self.q1, self.q2, self.q3 = 1.0, 0.0, 0.0, 0.0
+
+    def update(self, gx, gy, gz, ax, ay, az, dt, kp, use_accel):
+        """g*: rad/s ; a*: g"""
+        if use_accel:
+            n = math.sqrt(ax * ax + ay * ay + az * az)
+            if n > 1e-6:
+                ax, ay, az = ax / n, ay / n, az / n
+                q0, q1, q2, q3 = self.q0, self.q1, self.q2, self.q3
+                hvx = q1 * q3 - q0 * q2
+                hvy = q0 * q1 + q2 * q3
+                hvz = q0 * q0 - 0.5 + q3 * q3
+                ex = ay * hvz - az * hvy
+                ey = az * hvx - ax * hvz
+                ez = ax * hvy - ay * hvx
+                gx += 2.0 * kp * ex
+                gy += 2.0 * kp * ey
+                gz += 2.0 * kp * ez
+        gx *= 0.5 * dt
+        gy *= 0.5 * dt
+        gz *= 0.5 * dt
+        qa, qb, qc = self.q0, self.q1, self.q2
+        self.q0 += -qb * gx - qc * gy - self.q3 * gz
+        self.q1 += qa * gx + qc * gz - self.q3 * gy
+        self.q2 += qa * gy - qb * gz + self.q3 * gx
+        self.q3 += qa * gz + qb * gy - qc * gx
+        r = 1.0 / math.sqrt(self.q0 ** 2 + self.q1 ** 2 + self.q2 ** 2 + self.q3 ** 2)
+        self.q0 *= r; self.q1 *= r; self.q2 *= r; self.q3 *= r
+
+    def yaw(self):
+        return math.atan2(2.0 * (self.q0 * self.q3 + self.q1 * self.q2), 1.0 - 2.0 * (self.q2 ** 2 + self.q3 ** 2))
+
+    def set_yaw(self, new_yaw):
+        d = new_yaw - self.yaw()
+        c, s = math.cos(0.5 * d), math.sin(0.5 * d)
+        q0, q1, q2, q3 = self.q0, self.q1, self.q2, self.q3
+        self.q0 = c * q0 - s * q3
+        self.q1 = c * q1 - s * q2
+        self.q2 = c * q2 + s * q1
+        self.q3 = c * q3 + s * q0
+
+
+# =====================================================================
+# ============================== CHUỘT ================================
+# =====================================================================
+class MouseReader(threading.Thread):
+    """Chạy nền, cộng dồn REL_X / REL_Y. Tự tìm lại chuột nếu rút ra cắm vào."""
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.lock = threading.Lock()
+        self.acc_x = 0
+        self.acc_y = 0
+        self.connected = False
+
+    @staticmethod
+    def find():
+        paths = [MOUSE_DEVICE] if MOUSE_DEVICE else evdev.list_devices()
+        for p in paths:
+            try:
+                d = evdev.InputDevice(p)
+                rel = d.capabilities().get(ecodes.EV_REL, [])
+                if ecodes.REL_X in rel and ecodes.REL_Y in rel:
+                    return d
+                d.close()
+            except OSError:
+                continue
+        return None
+
+    def read_acc(self):
+        with self.lock:
+            return self.acc_x, self.acc_y
+
+    def run(self):
+        while True:
+            dev = self.find()
+            if dev is None:
+                self.connected = False
+                time.sleep(1.0)
+                continue
+            print(f"[MOUSE] Dùng {dev.path} ({dev.name})")
+            try:
+                dev.grab()                      # không cho con trỏ hệ điều hành nhúc nhích theo
+            except OSError:
+                pass
+            self.connected = True
+            try:
+                for ev in dev.read_loop():
+                    if ev.type == ecodes.EV_REL:
+                        if ev.code == ecodes.REL_X:
+                            with self.lock:
+                                self.acc_x += ev.value
+                        elif ev.code == ecodes.REL_Y:
+                            with self.lock:
+                                self.acc_y += ev.value
+            except OSError:
+                pass
+            self.connected = False
+            print("[MOUSE] Mất chuột, tìm lại...")
+
+
+# =====================================================================
+# ============================== CHÍNH ================================
+# =====================================================================
+class Robot:
+    def __init__(self):
+        self.imu = Bmi160()
+        self.imu_ok = self.imu.begin()
+        self.ahrs = Mahony()
+        self.mouse = MouseReader()
+        self.mouse.start()
+
+        self.x = self.y = self.yaw = 0.0
+        self.vx = self.vy = 0.0
+        self.w = 0.0
+        self.bias = [0.0, 0.0, 0.0]
+        self.raw_x = self.raw_y = 0
+        self.gyro_deg = 0.0
+        self.set_ack = 0
+        self.seq = 0
+
+        self.calibrating = True
+        self.cal_start = time.monotonic()
+        self.cal_sum = [0.0, 0.0, 0.0]
+        self.cal_n = 0
+        self.last_mouse = (0, 0)
+        self.flow_last_yaw = 0.0
+        self.last_motion = 0.0
+        self.t_imu = self.t_flow = self.t_pkt = time.perf_counter()
+
+    # ---- lệnh từ ESP32#1 ----
+    def handle_rx(self, rx: bytes):
+        i = 0
+        while i < len(rx):
+            cmd = rx[i]
+            if cmd == FLOW_CMD_SET_POSE and i + 13 <= len(rx):
+                x, y, yaw = struct.unpack("<3f", rx[i + 1:i + 13])
+                self.x, self.y = x, y
+                self.ahrs.set_yaw(yaw)
+                self.yaw = self.ahrs.yaw()
+                self.flow_last_yaw = self.yaw
+                self.last_mouse = self.mouse.read_acc()
+                self.vx = self.vy = 0.0
+                self.set_ack = (self.set_ack + 1) & 0xFF
+                i += 13
+            elif cmd == FLOW_CMD_CAL_GYRO:
+                self.start_calibration()
+                i += 1
+            elif cmd == FLOW_CMD_CLEAR_RAW:
+                self.raw_x = self.raw_y = 0
+                self.gyro_deg = 0.0
+                i += 1
+            else:
+                i += 1
+
+    def start_calibration(self):
+        self.calibrating = True
+        self.cal_start = time.monotonic()
+        self.cal_sum = [0.0, 0.0, 0.0]
+        self.cal_n = 0
+        print("[IMU] Đo bias gyro, GIỮ YÊN XE")
+
+    # ---- IMU ----
+    def imu_step(self, now):
+        dt = min(now - self.t_imu, 0.05)
+        self.t_imu = now
+        if not self.imu_ok:
+            return
+        s = self.imu.read()
+        if s is None:
+            return
+        gx, gy, gz, ax, ay, az = s
+        if self.calibrating:
+            self.cal_sum[0] += gx; self.cal_sum[1] += gy; self.cal_sum[2] += gz; self.cal_n += 1
+            self.ahrs.update(0, 0, 0, ax, ay, az, dt, 8.0, True)       # gom tư thế nghiêng nhanh khi đứng yên
+            if time.monotonic() - self.cal_start >= CAL_S and self.cal_n > 50:
+                self.bias = [v / self.cal_n for v in self.cal_sum]
+                self.calibrating = False
+                self.last_mouse = self.mouse.read_acc()
+                self.flow_last_yaw = self.ahrs.yaw()
+                print(f"[IMU] bias = {self.bias[0]:.3f} {self.bias[1]:.3f} {self.bias[2]:.3f} dps ({self.cal_n} mẫu)")
+            return
+        rx = (gx - self.bias[0]) * GYRO_SIGN * GYRO_SCALE
+        ry = (gy - self.bias[1]) * GYRO_SIGN * GYRO_SCALE
+        rz = (gz - self.bias[2]) * GYRO_SIGN * GYRO_SCALE
+        # xe đứng yên => từ từ học lại bias để giảm trôi
+        if abs(rx) < 1.5 and abs(ry) < 1.5 and abs(rz) < 1.5 and time.monotonic() - self.last_motion > 0.3:
+            for i, g in enumerate((gx, gy, gz)):
+                self.bias[i] += 0.0005 * (g - self.bias[i])
+        an = math.sqrt(ax * ax + ay * ay + az * az)
+        use_acc = ACCEL_G_MIN < an < ACCEL_G_MAX
+        d2r = math.pi / 180.0
+        self.ahrs.update(rx * d2r, ry * d2r, rz * d2r, ax, ay, az, dt, MAHONY_KP, use_acc)
+        self.yaw = self.ahrs.yaw()
+        self.w = rz * d2r
+        self.gyro_deg += rz * dt
+
+    # ---- chuột + toạ độ ----
+    def flow_step(self, now):
+        dts = now - self.t_flow
+        self.t_flow = now
+        if self.calibrating:
+            return
+        cx, cy = self.mouse.read_acc()
+        dx, dy = cx - self.last_mouse[0], cy - self.last_mouse[1]
+        self.last_mouse = (cx, cy)
+        dth = wrap_pi(self.yaw - self.flow_last_yaw)
+        self.flow_last_yaw = self.yaw
+        if dx or dy or abs(dth) > 1e-4:
+            self.last_motion = time.monotonic()
+        sx, sy = (dy, dx) if FLOW_SWAP_XY else (dx, dy)
+        sx *= FLOW_SIGN_X
+        sy *= FLOW_SIGN_Y
+        self.raw_x += int(sx)
+        self.raw_y += int(sy)
+        mx, my = sx * FLOW_MM_PER_COUNT, sy * FLOW_MM_PER_COUNT
+        if math.hypot(mx, my) > FLOW_MAX_JUMP_MM:
+            return
+        # chuột cách tâm quay (px, py): xe xoay dth thì chuột "trượt" (-dth*py, +dth*px) dù tâm xe đứng yên => trừ đi
+        tx = mx + dth * FLOW_POS_Y_MM
+        ty = my - dth * FLOW_POS_X_MM
+        thm = self.yaw - 0.5 * dth
+        c, s = math.cos(thm), math.sin(thm)
+        fx, fy = c * tx - s * ty, s * tx + c * ty
+        self.x += fx
+        self.y += fy
+        if dts > 1e-4:
+            self.vx = 0.7 * self.vx + 0.3 * fx / dts
+            self.vy = 0.7 * self.vy + 0.3 * fy / dts
+
+    def packet(self) -> bytes:
+        flags = (POSE_FLAG_IMU_OK if self.imu_ok else 0) | (POSE_FLAG_MOUSE_OK if self.mouse.connected else 0) \
+            | (POSE_FLAG_CALIBRATING if self.calibrating else 0)
+        self.seq = (self.seq + 1) & 0xFF
+        body = struct.pack(POSE_FMT[:-1], self.seq, flags, self.set_ack, self.x, self.y, self.yaw,
+                           self.vx, self.vy, self.w, self.raw_x, self.raw_y, self.gyro_deg)
+        return body + bytes([crc8(body)])
+
+
+def main():
+    pi = pigpio.pi()
+    if not pi.connected:
+        sys.exit("Không nối được pigpiod: chạy  sudo systemctl enable --now pigpiod")
+    try:                                   # ưu tiên thời gian thực cho vòng lặp
+        os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(20))
+    except (PermissionError, AttributeError, OSError):
+        pass
+
+    bot = Robot()
+    print("ORC_Pi sẵn sàng, I2C slave 0x%02X. Giữ yên xe ~%.1f s để đo bias gyro." % (I2C_SLAVE_ADDR, CAL_S))
+    pkt = bot.packet()
+    last_print = 0.0
+    try:
+        while True:
+            now = time.perf_counter()
+            if now - bot.t_imu >= IMU_PERIOD:
+                bot.imu_step(now)
+            if now - bot.t_flow >= FLOW_PERIOD:
+                bot.flow_step(now)
+            if now - bot.t_pkt >= PKT_PERIOD:
+                bot.t_pkt = now
+                pkt = bot.packet()
+                # Nạp gói mới vào FIFO phát và nhận luôn các byte lệnh ESP32#1 vừa ghi
+                _status, n, rx = pi.bsc_i2c(I2C_SLAVE_ADDR, pkt)
+                if n:
+                    bot.handle_rx(bytes(rx))
+            t = time.monotonic()
+            if t - last_print > 0.5:
+                last_print = t
+                print(f"x={bot.x:7.1f} y={bot.y:7.1f} yaw={math.degrees(bot.yaw):7.2f}° | chuột:{'OK' if bot.mouse.connected else 'chưa cắm'} "
+                      f"raw=({bot.raw_x},{bot.raw_y}) | IMU:{'OK' if bot.imu_ok else 'LỖI'}{' (đang cân gyro)' if bot.calibrating else ''}")
+            time.sleep(0.0005)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        pi.bsc_i2c(0)                      # tắt BSC
+        pi.stop()
+
+
+if __name__ == "__main__":
+    main()

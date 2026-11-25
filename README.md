@@ -1,6 +1,6 @@
 # ORC_RUNNER — Path Planner + firmware robot ORC
 
-App web để vẽ đường chạy tự động cho robot mecanum ORC, và firmware cho 3 board trên xe (mỗi cơ cấu một file).
+App web để vẽ đường chạy tự động cho robot mecanum ORC, và firmware cho 3 bộ điều khiển trên xe (mỗi cơ cấu một file).
 
 ```
 index.html                       ← app (deploy lên GitHub Pages)
@@ -11,7 +11,7 @@ firmware/
     config.h         ★ TẤT CẢ chân + hằng số hiệu chỉnh
     Motors.h         4 mạch L298N, PWM trên chân IN
     Drive.h          4 bánh mecanum
-    Odometry.h       toạ độ x, y, yaw đọc từ Pico
+    Odometry.h       toạ độ x, y, yaw đọc từ Raspberry Pi
     Encoders.h       encoder đọc từ ESP32#2
     Intake.h         hút bóng
     Shooter.h        bắn banh — PID tốc độ (encoder)
@@ -21,10 +21,10 @@ firmware/
     PidCtrl.h  Common.h  orc_protocol.h
     path_data.h      đường đi do app tạo ra (chép đè vào đây)
   ORC_Encoder/  ESP32#2 — I2C slave 0x42: đếm 2 encoder (bắn banh, nâng hạ)
-  ORC_Pico/     Pico (RPi) — I2C slave 0x43: BMI160 + chuột optical flow => x, y, yaw
+  ORC_Pi/       Raspberry Pi 3B+ (Python) — I2C slave 0x43: BMI160 + chuột optical flow => x, y, yaw
 ```
 
-`orc_protocol.h` có mặt giống hệt trong 3 thư mục (Arduino IDE không dùng chung file giữa các sketch). Sửa một nơi thì chép sang 2 nơi còn lại.
+`orc_protocol.h` có mặt giống hệt trong `ORC_Robot` và `ORC_Encoder` (Arduino IDE không dùng chung file giữa các sketch). Bản Pi khai báo lại cùng giao thức trong `orc_pi.py`; đổi giao thức thì sửa cả ba.
 
 ## 1. Deploy app lên GitHub Pages
 1. Repo này: https://github.com/thanh-ph08/ORC_RUNNER
@@ -80,7 +80,7 @@ Hệ toạ độ: gốc ở góc dưới-trái sân, x sang phải, y lên trên
 
 ## 3. Phần cứng và đấu dây
 
-Kiến trúc: ESP32#1 là I2C master (SDA 21, SCL 22), cùng một bus với ESP32#2 (0x42), Pico (0x43) và hub Ohstem driverV2 (0x54). Cần trở kéo lên 3.3V (2.2k–4.7k) trên SDA/SCL, GND chung tất cả board.
+Kiến trúc: ESP32#1 là I2C master (SDA 21, SCL 22), cùng một bus với ESP32#2 (0x42), Raspberry Pi (0x43) và hub Ohstem driverV2 (0x54). Cần trở kéo lên 3.3V (2.2k–4.7k) trên SDA/SCL, GND chung tất cả board.
 
 ### Motor — 4 mạch L298N, PWM trên IN, jumper ENA/ENB giữ nguyên
 | Mạch | IN1 IN2 IN3 IN4 (ESP32#1) | Motor |
@@ -95,12 +95,14 @@ Bảng này chỉ là cách mình ghép 4 hàng chân bạn đưa vào từng mo
 ### Encoder (ESP32#2) — "Rotary Encoder 100 xung 5VDC"
 Dây đỏ = nguồn, đen = GND, 2 dây còn lại = A, B (collector hở). **Cấp nguồn 3.3V** để tín hiệu ra 3.3V; cấp 5V thì tín hiệu 5V sẽ vượt mức chịu của chân ESP32. Chân tạm: bắn banh A/B = 32/33, nâng hạ A/B = 25/26, sửa ở đầu `ORC_Encoder.ino`. Đọc x4 => 400 count/vòng.
 
-### Pico
-| Chức năng | Chân Pico |
+### Raspberry Pi 3B+ (số chân theo GPIO/BCM)
+| Chức năng | Chân Pi |
 |---|---|
-| I2C slave (nối ESP32#1) | SDA GP4, SCL GP5 |
-| BMI160 (I2C1) | SDA GP6, SCL GP7 (nằm phẳng, trục Z hướng lên) |
-| Chuột USB (PIO-USB) | D+ GP2, D- GP3, 5V cho chuột, 15k xuống GND ở mỗi chân D+/D- |
+| I2C slave (nối ESP32#1) | SDA GPIO18 (chân vật lý 12), SCL GPIO19 (chân 35), GND chung |
+| BMI160 (I2C bus 1) | SDA GPIO2 (chân 3), SCL GPIO3 (chân 5), 3V3, GND. Nằm phẳng, trục Z hướng lên |
+| Chuột optical | cắm cổng USB của Pi |
+
+GPIO18/19 là cặp chân I2C slave (BSC) cố định của Pi 3. Logic 3.3V ở cả hai phía. Trở kéo lên 3.3V để ngoài bus (Pi không có trở kéo lên cho cặp chân này).
 
 ### Servo
 Hub Ohstem **driverV2** (I2C 0x54) với thư viện OhStemRobotics: servo 1 = gắp bóng (S1), servo 2 = dẫn bóng 360° (S2).
@@ -116,11 +118,12 @@ Hub Ohstem **driverV2** (I2C 0x54) với thư viện OhStemRobotics: servo 1 = g
 
 **ESP32#2 (`ORC_Encoder`)**: board ESP32 Dev Module (core esp32 hoặc esp32_bluepad32 đều được), không cần thư viện. Chưa nối ESP32#1 vẫn mở Serial Monitor được: xoay encoder bằng tay sẽ thấy count thay đổi.
 
-**Pico (`ORC_Pico`)**
-1. Boards Manager: **Raspberry Pi Pico/RP2040** (Earle Philhower). Board: Raspberry Pi Pico.
-2. Tools → **CPU Speed = 120 MHz**, Tools → **USB Stack = Adafruit TinyUSB**.
-3. Library Manager: **Adafruit TinyUSB Library** (≥ 3.0) và **Pico PIO USB**.
-4. Nạp. Serial Monitor (USB của Pico, 115200) in toạ độ, trạng thái chuột và IMU.
+**Raspberry Pi (`ORC_Pi/orc_pi.py`)** — Python, không cần Arduino
+1. `sudo apt install -y pigpio python3-pigpio python3-smbus2 python3-evdev`
+2. `sudo raspi-config` → Interface Options → bật **I2C**. Thêm vào `/boot/firmware/config.txt`: `dtparam=i2c_arm=on,i2c_arm_baudrate=400000`
+3. `sudo systemctl enable --now pigpiod`
+4. `sudo python3 orc_pi.py` (cần root để đọc chuột và dùng BSC). Màn hình in toạ độ, trạng thái chuột và IMU mỗi 0,5 s.
+5. Muốn tự chạy khi bật Pi: sửa đường dẫn trong `orc-pi.service`, chép vào `/etc/systemd/system/`, `sudo systemctl enable --now orc-pi`.
 
 ## 5. Tay cầm
 
@@ -146,8 +149,8 @@ Serial Monitor của ESP32#1 (115200): `r` về điểm xuất phát, `a` chạy
 ## 6. Hiệu chỉnh (theo thứ tự)
 
 1. **Chiều motor xe**: đẩy cần tới thì cả 4 bánh quay tới, bánh nào ngược thì đổi `MOTOR_INVERT`.
-2. **Pico**: mở Serial Monitor Pico, giữ yên xe 1,5 s để đo bias gyro. Cắm chuột, thấy `chuột:OK`.
-3. **Chuột optical flow** (hằng số ở đầu `ORC_Pico.ino`): gõ `z` ở ESP32#1, đẩy xe đúng 1000 mm, gõ `f`. `FLOW_MM_PER_COUNT = 1000 / số đếm`. Đẩy tới phải ra x dương, đẩy sang trái phải ra y dương; không thì chỉnh `FLOW_SWAP_XY` / `FLOW_SIGN_*`. Đo vị trí chuột so với tâm quay của xe và điền `FLOW_POS_X_MM` / `FLOW_POS_Y_MM`: thiếu bước này, xe xoay tại chỗ sẽ bị tính là đi.
+2. **Raspberry Pi**: chạy `orc_pi.py`, giữ yên xe 1,5 s để đo bias gyro. Thấy `chuột:OK` và `IMU:OK`.
+3. **Chuột optical flow** (hằng số ở đầu `orc_pi.py`): gõ `z` ở ESP32#1, đẩy xe đúng 1000 mm, gõ `f`. `FLOW_MM_PER_COUNT = 1000 / số đếm`. Đẩy tới phải ra x dương, đẩy sang trái phải ra y dương; không thì chỉnh `FLOW_SWAP_XY` / `FLOW_SIGN_*`. Đo vị trí chuột so với tâm quay của xe và điền `FLOW_POS_X_MM` / `FLOW_POS_Y_MM`: thiếu bước này, xe xoay tại chỗ sẽ bị tính là đi.
 4. **Gyro**: `z`, quay xe đúng 10 vòng, `g`. `GYRO_SCALE = 3600 / số độ`. Quay ngược chiều kim đồng hồ mà yaw giảm thì `GYRO_SIGN = -1`.
 5. **KS / KV xe** (`config.h`): KS là PWM nhỏ nhất làm xe nhúc nhích, `KV ≈ (PWM − KS) / v`.
 6. **PID bám path** (đầu `Auto.h`): tăng `AUTO_KP_XY` tới khi bám tốt mà không rung, thêm `AUTO_KI_XY` nếu dừng thiếu vài mm.
@@ -158,8 +161,13 @@ Serial Monitor của ESP32#1 (115200): `r` về điểm xuất phát, `a` chạy
 ## 7. Giao thức I2C (`orc_protocol.h`)
 
 - ESP32#2 (0x42): ESP32#1 đọc `EncoderPacket` (18 byte: seq, count và count/s của 2 encoder, CRC-8). Ghi 1 byte để xoá count.
-- Pico (0x43): ESP32#1 đọc `PosePacket` (40 byte: x, y, yaw, vx, vy, w, cờ trạng thái, bộ đếm thô để hiệu chỉnh, CRC-8). Ghi `0x10 + x,y,yaw` để đặt toạ độ, `0x11` đo lại gyro, `0x12` xoá bộ đếm thô.
-- Gói sai CRC hoặc không đủ byte bị bỏ qua và đếm lỗi (hiện trong dòng telemetry). Mất Pico quá 80 ms thì tự động dừng; mất ESP32#2 thì shooter và lift tắt motor. Nếu hay lỗi, hạ `I2C_CLOCK` xuống 100000.
+- Raspberry Pi (0x43): ESP32#1 đọc `PosePacket` (40 byte: x, y, yaw, vx, vy, w, cờ trạng thái, bộ đếm thô để hiệu chỉnh, CRC-8). Ghi `0x10 + x,y,yaw` để đặt toạ độ, `0x11` đo lại gyro, `0x12` xoá bộ đếm thô.
+- Gói sai CRC hoặc không đủ byte bị bỏ qua và đếm lỗi (hiện trong dòng telemetry). Mất Pi quá 80 ms thì tự động dừng; mất ESP32#2 thì shooter và lift tắt motor. Nếu hay lỗi, hạ `I2C_CLOCK` xuống 100000.
 
 ## 8. Viết hành động riêng
 Cuối file `Auto.h`, hàm `runCustomAction(id, param, start)`: thêm một `case` cho mỗi id bạn đặt trong app. Hàm trả về `true` khi xong. Không dùng `delay()` trong hàm này. Các cơ cấu đã có hàm sẵn: `intakeCommand`, `shooterSetRpm` / `shooterEnable`, `liftSetTarget`, `gripSet`, `guideSet`.
+
+### Lưu ý riêng cho Pi làm I2C slave
+- Pi không phải thiết bị real-time. Vòng Python chạy cỡ vài trăm Hz, `dt` của bộ lọc được đo thật nên vẫn đúng, nhưng độ trễ toạ độ có thể lên vài chục ms. Script tự xin lịch chạy thời gian thực (SCHED_FIFO) khi chạy bằng root.
+- I2C slave của Pi (BSC) kém ổn định hơn vi điều khiển: nếu ESP32#1 hay báo lỗi `I2C lỗi pose`, hạ `I2C_CLOCK` trong `config.h` xuống 100000. Ở 100 kHz thì mỗi vòng 10 ms đọc cả Pi lẫn ESP32#2 sẽ sát giới hạn; khi đó tăng `CONTROL_PERIOD_US` lên 20000.
+- Pose bị mất khi `orc_pi.py` dừng: xe sẽ dừng ngay nếu đang chạy tự động.
