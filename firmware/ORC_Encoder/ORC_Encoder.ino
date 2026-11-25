@@ -23,7 +23,7 @@
 const int SHOOTER_PIN_A = 32, SHOOTER_PIN_B = 33;
 const int LIFT_PIN_A    = 25, LIFT_PIN_B    = 26;
 const int I2C_SDA = 21, I2C_SCL = 22;
-const uint32_t I2C_CLOCK = 400000;
+const uint32_t I2C_CLOCK = 100000;     // khớp ESP32#1
 
 const uint32_t VEL_PERIOD_MS = 10;      // chu kỳ tính tốc độ
 const float    VEL_FILTER    = 0.35f;   // 0..1, càng lớn càng bám nhanh nhưng nhiễu hơn
@@ -59,8 +59,10 @@ void quadBegin(Quad &q) {
 static EncoderPacket pkt;                 // gói đang phát (cập nhật trong loop)
 static portMUX_TYPE pktMux = portMUX_INITIALIZER_UNLOCKED;
 static uint8_t seq = 0;
+static volatile uint32_t reqCount = 0, rcvCount = 0;   // đếm số lần ESP32#1 đọc / ghi tới (để biết bus I2C có tới được không)
 
 void onRequestCb() {
+  reqCount++;
   portENTER_CRITICAL(&pktMux);
   EncoderPacket copy = pkt;
   portEXIT_CRITICAL(&pktMux);
@@ -68,6 +70,7 @@ void onRequestCb() {
 }
 
 void onReceiveCb(int n) {
+  rcvCount++;
   while (Wire.available()) {
     uint8_t cmd = Wire.read();
     if (cmd == ENC_CMD_RESET_SHOOTER || cmd == ENC_CMD_RESET_ALL) shooterEnc.count = 0;
@@ -82,7 +85,8 @@ void setup() {
 
   Wire.onReceive(onReceiveCb);
   Wire.onRequest(onRequestCb);
-  Wire.begin((uint8_t)ORC_ADDR_ENCODER, I2C_SDA, I2C_SCL, I2C_CLOCK);
+  bool i2cOk = Wire.begin((uint8_t)ORC_ADDR_ENCODER, I2C_SDA, I2C_SCL, I2C_CLOCK);
+  if (!i2cOk) Serial.println("!! Wire.begin (slave) THẤT BẠI — kiểm tra chân SDA/SCL và core ESP32");
 
   memset(&pkt, 0, sizeof(pkt));
   pkt.crc = orcCrc8((uint8_t *)&pkt, sizeof(pkt) - 1);
@@ -118,7 +122,8 @@ void loop() {
   static uint32_t lastPrint = 0;
   if (now - lastPrint >= 500) {
     lastPrint = now;
-    Serial.printf("shooter=%ld (%ld cps)  lift=%ld (%ld cps)\n", (long)shooterEnc.count, (long)lroundf(cpsShooter),
-                  (long)liftEnc.count, (long)lroundf(cpsLift));
+    Serial.printf("shooter=%ld (%ld cps)  lift=%ld (%ld cps) | I2C: đọc=%lu ghi=%lu\n", (long)shooterEnc.count,
+                  (long)lroundf(cpsShooter), (long)liftEnc.count, (long)lroundf(cpsLift),
+                  (unsigned long)reqCount, (unsigned long)rcvCount);
   }
 }
