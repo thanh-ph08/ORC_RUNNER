@@ -103,6 +103,10 @@ def wrap_pi(a: float) -> float:
 # =====================================================================
 class Bmi160:
     def __init__(self, bus_no=IMU_BUS, addr=BMI160_ADDR):
+        if not os.path.exists(f"/dev/i2c-{bus_no}"):
+            print(f"[IMU] CẢNH BÁO: chưa có /dev/i2c-{bus_no} (chưa thêm dtoverlay i2c-gpio trong config.txt), "
+                  f"tạm dùng bus 1 — BMI160 phải nằm ở GPIO2/3. Nên tách bus riêng, xem README.")
+            bus_no = 1
         self.bus = SMBus(bus_no)
         self.addr = addr
         self.err = 0            # số lần đọc I2C lỗi (OSError)
