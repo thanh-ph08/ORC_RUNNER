@@ -2,6 +2,10 @@
  * config.h — TOÀN BỘ chân + hằng số hiệu chỉnh của ESP32#1. Chỉ cần sửa file này khi đổi dây.
  */
 #pragma once
+
+// 1 = mỗi lần bật ESP32 xoá khoá Bluetooth cũ, tay cầm phải ghép lại (giữ Share + PS). Dùng khi mới thử / ghép lỗi.
+// Khi đã ghép ổn, đổi về 0 để tay cầm tự nối lại sau khi bật xe.
+#define PAD_FORGET_KEYS_ON_BOOT 1
 #include <stdint.h>
 
 // =====================================================================

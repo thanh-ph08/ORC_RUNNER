@@ -103,8 +103,14 @@ void setup() {
   setPose(START_X_MM, START_Y_MM, START_TH_RAD);
   holdTarget = START_TH_RAD;
 
+  Serial.printf("Bluepad32 firmware: %s\n", BP32.firmwareVersion());
+  const uint8_t* bd = BP32.localBdAddress();
+  Serial.printf("BD Addr: %02X:%02X:%02X:%02X:%02X:%02X\n", bd[0], bd[1], bd[2], bd[3], bd[4], bd[5]);
   BP32.setup(&onConnectedController, &onDisconnectedController);
-  // BP32.forgetBluetoothKeys();   // bỏ comment 1 lần nếu cần ghép lại tay cầm từ đầu
+#if PAD_FORGET_KEYS_ON_BOOT
+  BP32.forgetBluetoothKeys();               // xoá khoá cũ: mỗi lần bật phải ghép lại (Share + PS), nhưng ghép chắc chắn nhất
+#endif
+  BP32.enableVirtualDevice(false);          // không tạo "chuột ảo" từ touchpad PS4/PS5
   Serial.println("Ghép tay PS4: giữ Share + PS. Tay PS5: giữ Create + PS.");
 }
 

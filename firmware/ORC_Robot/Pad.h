@@ -21,7 +21,8 @@ static ControllerPtr pad = nullptr;
 void onConnectedController(ControllerPtr ctl) {
   if (pad == nullptr) {
     pad = ctl;
-    Serial.println("[PAD] Đã kết nối tay cầm");
+    ControllerProperties pr = ctl->getProperties();
+    Serial.printf("[PAD] Đã kết nối tay cầm: %s (VID=0x%04x PID=0x%04x)\n", ctl->getModelName().c_str(), pr.vendor_id, pr.product_id);
     ctl->setColorLED(0, 255, 0);
   } else {
     Serial.println("[PAD] Đã có tay cầm, bỏ qua tay thứ hai");
