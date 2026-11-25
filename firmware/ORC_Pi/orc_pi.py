@@ -404,6 +404,9 @@ class MouseReader(threading.Thread):
         self.acc_x = 0
         self.acc_y = 0
         self.connected = False
+        self.warned = False
+
+    BAD_NAMES = ("hdmi", "vc4", "cec", "keyboard", "kbd", "touchpad")   # thiết bị ảo của Pi / bàn phím có REL_X giả
 
     @staticmethod
     def find():
@@ -411,8 +414,14 @@ class MouseReader(threading.Thread):
         for p in paths:
             try:
                 d = evdev.InputDevice(p)
-                rel = d.capabilities().get(ecodes.EV_REL, [])
-                if ecodes.REL_X in rel and ecodes.REL_Y in rel:
+                caps = d.capabilities()
+                rel = caps.get(ecodes.EV_REL, [])
+                keys = caps.get(ecodes.EV_KEY, [])
+                name = (d.name or "").lower()
+                ok = ecodes.REL_X in rel and ecodes.REL_Y in rel
+                if not MOUSE_DEVICE:               # tự dò: bỏ thiết bị HDMI-CEC (vc4-hdmi) và thứ không phải chuột thật
+                    ok = ok and ecodes.BTN_LEFT in keys and not any(b in name for b in MouseReader.BAD_NAMES)
+                if ok:
                     return d
                 d.close()
             except OSError:
@@ -428,8 +437,19 @@ class MouseReader(threading.Thread):
             dev = self.find()
             if dev is None:
                 self.connected = False
+                if not self.warned:
+                    self.warned = True
+                    names = []
+                    for p in evdev.list_devices():
+                        try:
+                            names.append(f"{p}={evdev.InputDevice(p).name}")
+                        except OSError:
+                            pass
+                    print("[MOUSE] Không thấy chuột USB (loại vc4-hdmi). Cắm chuột optical vào cổng USB của Pi. Thiết bị hiện có: "
+                          + (", ".join(names) or "không có"))
                 time.sleep(1.0)
                 continue
+            self.warned = False
             print(f"[MOUSE] Dùng {dev.path} ({dev.name})")
             try:
                 dev.grab()                      # không cho con trỏ hệ điều hành nhúc nhích theo
