@@ -39,7 +39,7 @@ const uint32_t RPI_BAUD   = 921600;
 // Cần trở kéo lên 3.3V (2.2k–4.7k) trên SDA/SCL. Nếu hay lỗi đọc, hạ I2C_CLOCK xuống 100000.
 // =====================================================================
 const int      I2C_SDA = 21, I2C_SCL = 22;
-const uint32_t I2C_CLOCK = 400000;
+const uint32_t I2C_CLOCK = 100000;   // 100 kHz: ổn định hơn khi Bluetooth (Bluepad32) đang chạy; tăng lên 400000 nếu bus sạch
 const uint32_t SENSOR_STALE_MS = 80;   // quá lâu không đọc được => coi là mất tín hiệu
 
 // =====================================================================

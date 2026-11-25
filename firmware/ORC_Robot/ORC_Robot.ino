@@ -46,6 +46,18 @@ static void handleSerial() {
   while (Serial.available()) {
     char c = Serial.read();
     switch (c) {
+      case 'i': {   // quét I2C: ESP32#2 = 0x42, hub Ohstem = 0x54
+        Serial.println("[I2C] Quét bus (lỗi 2 = trống, 5 = timeout):");
+        int found = 0;
+        for (uint8_t ad = 1; ad < 127; ad++) {
+          Wire.beginTransmission(ad);
+          uint8_t er = Wire.endTransmission();
+          if (er == 0) { Serial.printf("  thấy thiết bị 0x%02X\n", ad); found++; }
+          else if (er != 2) Serial.printf("  lỗi %u tại 0x%02X\n", er, ad);
+        }
+        Serial.printf("[I2C] Xong, %d thiết bị\n", found);
+        break;
+      }
       case 'r': resetPoseToStart(); break;
       case 'a': startAuto(); break;
       case 's': if (robotMode == RM_AUTO) stopAuto("lệnh Serial"); stopDrive(); break;
