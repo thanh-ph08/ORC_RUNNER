@@ -130,6 +130,15 @@ class Bmi160:
         time.sleep(0.05)
         return True
 
+    def read_temp(self):
+        """Nhiệt độ chip [°C] (thanh ghi 0x20/0x21)"""
+        try:
+            lo, hi = self.bus.read_i2c_block_data(self.addr, 0x20, 2)
+        except OSError:
+            return float("nan")
+        t = struct.unpack("<h", bytes([lo, hi]))[0]
+        return 23.0 + t / 512.0
+
     def read(self):
         """-> (gx, gy, gz [dps], ax, ay, az [g]) hoặc None"""
         try:
@@ -459,7 +468,32 @@ class CmdParser:
         return out
 
 
+def imu_test(seconds=60):
+    """python3 orc_pi.py --imu-test : đo thô BMI160 để biết gyro tự trôi hay do code. Để xe YÊN."""
+    imu = Bmi160()
+    if not imu.begin():
+        return
+    print("Giây | gyro thô gx gy gz (dps, trung bình 1 s) | |a| (g) | nhiệt độ | mẫu | nhiễu | lỗi")
+    t_end = time.monotonic() + seconds
+    while time.monotonic() < t_end:
+        t0 = time.monotonic()
+        sg, sa, n = [0.0, 0.0, 0.0], 0.0, 0
+        while time.monotonic() - t0 < 1.0:
+            r = imu.read()
+            if r:
+                sg[0] += r[0]; sg[1] += r[1]; sg[2] += r[2]
+                sa += math.sqrt(r[3] ** 2 + r[4] ** 2 + r[5] ** 2)
+                n += 1
+            time.sleep(0.002)
+        if n:
+            print(f"{int(time.monotonic() - t_end + seconds):3d} | {sg[0]/n:7.3f} {sg[1]/n:7.3f} {sg[2]/n:7.3f} | {sa/n:.3f} | "
+                  f"{imu.read_temp():.1f} °C | {n} | {imu.glitch} | {imu.err}")
+
+
 def main():
+    if "--imu-test" in sys.argv:
+        imu_test()
+        return
     try:
         ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=0, write_timeout=0.05)
     except serial.SerialException as e:
