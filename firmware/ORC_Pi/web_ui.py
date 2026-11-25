@@ -59,7 +59,7 @@ def _state(bot):
         "x": round(bot.x, 1), "y": round(bot.y, 1), "yaw": round(math.degrees(bot.yaw), 2),
         "vx": round(bot.vx, 1), "vy": round(bot.vy, 1),
         "raw": [bot.raw_x, bot.raw_y], "gyro": round(bot.gyro_deg, 1),
-        "imu_ok": bool(bot.imu_ok), "mouse": bool(bot.mouse.connected), "cal": bool(bot.calibrating),
+        "imu_ok": bool(bot.imu_ok) and (not hasattr(imu, "age") or (imu.age() is not None and imu.age() < 1.0)), "mouse": bool(bot.mouse.connected), "cal": bool(bot.calibrating),
         "imu_name": imu.NAME, "imu_hz": round(getattr(bot, "imu_hz", 0.0)),
         "imu_temp": round(getattr(bot, "imu_temp", float("nan")), 1) if not math.isnan(getattr(bot, "imu_temp", float("nan"))) else None,
         "glitch": imu.glitch, "err": imu.err, "resets": imu.resets,

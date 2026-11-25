@@ -24,6 +24,7 @@ Việc của Pi:
 
 Gõ Ctrl+C để thoát. Mỗi 0,5 s in toạ độ ra màn hình.
 """
+import collections
 import math
 import os
 import struct
@@ -44,7 +45,7 @@ SERIAL_PORT = "/dev/serial0"
 SERIAL_BAUD = 921600
 IMU_BUS = 3                         # bus I2C phần mềm riêng GPIO5/6 (dtoverlay=i2c-gpio,bus=3,...), tách khỏi ESP32
 WEB_PORT = 8080                    # trang giám sát http://<tên-máy>.local:8080 ; 0 = tắt
-IMU_TYPE = "mpu6050"               # "mpu6050" hoặc "bmi160"
+IMU_TYPE = "esp32"                 # "esp32" = ESP32#1 đọc MPU6050 rồi gửi qua UART (Pi KHÔNG đụng I2C); "mpu6050"/"bmi160" = Pi tự đọc I2C
 MPU6050_ADDR = 0x68                # 0x69 nếu chân AD0 nối 3V3
 BMI160_ADDR = 0x69                 # 0x68 nếu SDO nối GND
 
@@ -80,6 +81,7 @@ FLOW_CMD_CAL_GYRO = 0x11
 FLOW_CMD_CLEAR_RAW = 0x12
 FLOW_CMD_LOG = 0x20                # ESP32#1 -> Pi: mảnh log (text)
 FLOW_CMD_PING = 0x21               # ESP32#1 -> Pi: nhịp tim 1 Hz
+FLOW_CMD_IMU = 0x22                # ESP32#1 -> Pi: mẫu MPU6050 thô
 POSE_FLAG_IMU_OK = 0x01
 POSE_FLAG_MOUSE_OK = 0x02
 POSE_FLAG_CALIBRATING = 0x04
@@ -271,8 +273,76 @@ class Mpu6050(Bmi160):
         return struct.unpack(">h", bytes([hi, lo]))[0] / 340.0 + 36.53
 
 
+class EspImu:
+    """MPU6050 do ESP32#1 đọc (cùng bus I2C với hub), gửi mẫu thô qua UART. Pi không đụng I2C => không tranh bus."""
+    NAME = "MPU6050 (qua ESP32#1)"
+    GYRO_LSB = 32.8
+    ACC_LSB = 8192.0
+
+    def __init__(self):
+        self.q = collections.deque(maxlen=64)
+        self.err = 0            # lỗi I2C đếm ở phía ESP32#1
+        self.resets = 0         # số lần ESP32#1 phải khởi tạo lại chip
+        self.glitch = 0         # mẫu bị loại vì giá trị vô lý
+        self.last = None
+        self.rej_run = 0
+        self.last_ts = None
+        self.last_dt = 0.01
+        self.temp = float("nan")
+        self.rx_t = 0.0         # lần cuối nhận mẫu
+        self.n_rx = 0
+
+    def begin(self) -> bool:
+        return True
+
+    def push(self, p: bytes):
+        """p = payload sau byte lệnh: u32 µs | 6×int16 | int16 temp | u8 reset | u16 lỗi  (20 byte)"""
+        if len(p) < 21:
+            return
+        ts, = struct.unpack("<I", p[0:4])
+        v = struct.unpack("<6h", p[4:16])
+        t, = struct.unpack("<h", p[16:18])
+        self.resets = p[18]
+        self.err, = struct.unpack("<H", p[19:21])
+        self.temp = t / 340.0 + 36.53
+        self.rx_t = time.monotonic()
+        self.n_rx += 1
+        self.q.append((ts, v))
+
+    def age(self):
+        return None if self.n_rx == 0 else time.monotonic() - self.rx_t
+
+    def read_temp(self):
+        return self.temp
+
+    def read(self):
+        """-> (gx, gy, gz [dps], ax, ay, az [g]) hoặc None; self.last_dt = giây giữa 2 mẫu (theo đồng hồ của ESP32#1)"""
+        if not self.q:
+            return None
+        ts, v = self.q.popleft()
+        if self.last_ts is not None:
+            dt = ((ts - self.last_ts) & 0xFFFFFFFF) * 1e-6
+            self.last_dt = dt if 0.0005 < dt < 0.05 else 0.01
+        self.last_ts = ts
+        g, a = self.GYRO_LSB, self.ACC_LSB
+        s = (v[0] / g, v[1] / g, v[2] / g, v[3] / a, v[4] / a, v[5] / a)
+        bad = any(x in (-32768, 32767) for x in v) or abs(s[3]) > 4.5 or abs(s[4]) > 4.5 or abs(s[5]) > 4.5
+        if not bad and self.last is not None:
+            bad = max(abs(s[i] - self.last[i]) for i in range(3)) > GYRO_SPIKE_DPS
+        if bad and self.rej_run < 3:
+            self.rej_run += 1
+            self.glitch += 1
+            return None
+        self.rej_run = 0
+        self.last = s
+        return s
+
+
 def make_imu():
-    return Mpu6050() if IMU_TYPE.lower() == "mpu6050" else Bmi160()
+    t = IMU_TYPE.lower()
+    if t == "esp32":
+        return EspImu()
+    return Mpu6050() if t == "mpu6050" else Bmi160()
 
 
 # =====================================================================
@@ -411,6 +481,7 @@ class Robot:
         self.cal_nb = 0
         self.cal_done_t = 0.0
         self.seen_resets = 0
+        self.cal_warn_t = 0.0
         self.esp_last = 0.0            # lần cuối nhận bất cứ gì từ ESP32#1
         self.esp_pings = 0
         self.esp_buf = bytearray()
@@ -429,6 +500,10 @@ class Robot:
         self.esp_last = time.monotonic()
         if rx and rx[0] == FLOW_CMD_PING:
             self.esp_pings += 1
+            return
+        if rx and rx[0] == FLOW_CMD_IMU:
+            if isinstance(self.imu, EspImu):
+                self.imu.push(rx[1:])
             return
         if rx and rx[0] == FLOW_CMD_LOG:               # ghép các mảnh thành dòng, in ra (trang web đọc từ đây)
             self.esp_buf += rx[1:]
@@ -485,6 +560,8 @@ class Robot:
         if not self.imu_ok:
             return
         s = self.imu.read()
+        if isinstance(self.imu, EspImu):
+            dt = self.imu.last_dt                      # dt đo bằng đồng hồ ESP32#1, không bị Python/UART làm lệch
         if self.imu.resets != self.seen_resets:
             self.seen_resets = self.imu.resets
             still = time.monotonic() - self.last_motion > 1.0 and not self.calibrating
@@ -515,7 +592,9 @@ class Robot:
                     self.cal_nb += 1
             if el >= CAL_S and (self.cal_na <= 20 or self.cal_nb <= 20):
                 # hết giờ mà chưa đủ mẫu (cảm biến lỗi/đứt giữa chừng) -> đo lại từ đầu, tránh kẹt "đang cân" mãi
-                print("[IMU] Chưa đủ mẫu để đo bias (cảm biến đọc lỗi?), đo lại — giữ yên xe")
+                if mono - self.cal_warn_t > 5.0:
+                    self.cal_warn_t = mono
+                    print("[IMU] Chưa đủ mẫu để đo bias (cảm biến/ESP32#1 chưa gửi dữ liệu?), đo lại — giữ yên xe")
                 self.start_calibration()
                 return
             if el >= CAL_S and self.cal_na > 20 and self.cal_nb > 20:
@@ -630,6 +709,10 @@ class CmdParser:
 def imu_test(seconds=60):
     """python3 orc_pi.py --imu-test : đo thô IMU để biết gyro tự trôi hay do code. Để xe YÊN."""
     imu = make_imu()
+    if isinstance(imu, EspImu):
+        print("IMU_TYPE = esp32: IMU do ESP32#1 đọc nên không đo trực tiếp từ Pi được. Chạy bình thường rồi xem trang web / log;\n"
+              "muốn thử I2C ngay trên Pi thì tạm đặt IMU_TYPE = \"mpu6050\" (và Pi phải nối trực tiếp vào IMU).")
+        return
     if not imu.begin():
         return
     print("Giây | gyro thô gx gy gz (dps, trung bình 1 s) | |a| (g) | nhiệt độ | mẫu | nhiễu | lỗi")
@@ -673,7 +756,7 @@ def main():
     try:
         while True:
             now = time.perf_counter()
-            if now - bot.t_imu >= IMU_PERIOD:
+            if now - bot.t_imu >= (0.0 if isinstance(bot.imu, EspImu) else IMU_PERIOD):
                 bot.imu_step(now)
             if now - bot.t_flow >= FLOW_PERIOD:
                 bot.flow_step(now)

@@ -36,6 +36,7 @@
 #define FLOW_CMD_CLEAR_RAW  0x12   // xoá bộ đếm thô (rawX, rawY, gyroDeg) để hiệu chỉnh
 #define FLOW_CMD_LOG        0x20   // + text UTF-8 (tối đa 30 byte): một mảnh log của ESP32#1, Pi ghép theo dấu xuống dòng
 #define FLOW_CMD_PING       0x21   // nhịp tim 1 lần/giây: Pi biết đường ESP32#1 -> Pi còn sống
+#define FLOW_CMD_IMU        0x22   // ESP32#1 -> Pi: mẫu MPU6050 thô (xem Imu.h): u32 micros, 6×int16 (gx gy gz ax ay az), int16 temp, u8 reset, u16 lỗi
 
 #define POSE_FLAG_IMU_OK   0x01
 #define POSE_FLAG_MOUSE_OK 0x02

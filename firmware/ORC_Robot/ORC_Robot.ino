@@ -6,6 +6,7 @@
  *   Motors.h     L298N × 4 (PWM trên IN1/IN2)
  *   Drive.h      4 bánh mecanum
  *   Odometry.h   toạ độ x, y, yaw từ RPi (UART)
+ *   Imu.h        đọc MPU6050 (I2C 0x68) rồi gửi mẫu thô sang RPi qua UART
  *   Encoders.h   encoder từ ESP32#2
  *   Intake.h     hút bóng
  *   Shooter.h    bắn banh, PID tốc độ
@@ -33,6 +34,7 @@
 #include "PidCtrl.h"
 #include "Motors.h"
 #include "Odometry.h"
+#include "Imu.h"
 #include "Encoders.h"
 #include "Drive.h"
 #include "Intake.h"
@@ -104,6 +106,7 @@ void setup() {
   odometryBegin();                          // UART2 tới Raspberry Pi
   servosBegin();                            // hub.begin() gọi lại Wire.begin(), nên đặt lại clock sau đó
   Wire.setClock(I2C_CLOCK);
+  imuBegin();                               // MPU6050 trên Control Hub: ESP32#1 là master duy nhất của bus
   touchBegin();
   shooterBegin();
   liftBegin();
@@ -130,6 +133,7 @@ void setup() {
 void loop() {
   BP32.update();
   Log.pump();
+  imuStep();
   handleSerial();
 
   static uint32_t lastCtrl = micros();

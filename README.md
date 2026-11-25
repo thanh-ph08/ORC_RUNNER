@@ -104,7 +104,9 @@ Dây đỏ = nguồn, đen = GND, 2 dây còn lại = A, B (collector hở). **C
 | IMU (MPU6050 mặc định) SDA / SCL | **GPIO5 (chân 29) / GPIO6 (chân 31)** | MPU6050/BMI160, cấp 3V3 (chân 1), GND (chân 9). MPU6050: AD0 nối GND (địa chỉ 0x68). Nằm phẳng, trục Z hướng lên |
 | Chuột optical | cổng USB | |
 
-**IMU phải nằm trên bus I2C riêng của Pi (GPIO5/6), KHÔNG nối chung với SDA/SCL của ESP32#1 (GPIO21/22) và hub Ohstem.** Nối chung thì Pi và ESP32 tranh bus, gyro đọc ra mẫu hỏng làm yaw nhảy vài độ khi xe đứng yên. Dây GPIO2/3 (chân 3, 5) của Pi để trống. Bus riêng này là I2C phần mềm, bật ở bước 3 bên dưới.
+**Cách mặc định hiện nay (`IMU_TYPE = "esp32"`): MPU6050 hàn sẵn trên Control Hub nên ESP32#1 (master duy nhất của bus I2C) đọc nó ở 100 Hz rồi gửi mẫu thô sang Pi qua dây UART đã có (khung `0x22`, file `Imu.h`). **Pi KHÔNG nối vào I2C nào cả: rút dây SDA/SCL của Pi (GPIO2/3 hoặc GPIO5/6) khỏi IMU/hub**, chỉ còn 3 dây UART (TX, RX, GND). Pi tranh bus với ESP32 là nguyên nhân gây `Remote I/O error`, reset chip và cân gyro kẹt.**
+
+Chỉ khi IMU là module riêng nối thẳng vào Pi mới đặt `IMU_TYPE = "mpu6050"` và đấu vào bus riêng GPIO5/6 như bảng trên, tuyệt đối không chung bus với ESP32#1 và hub Ohstem. Nối chung thì Pi và ESP32 tranh bus, gyro đọc ra mẫu hỏng làm yaw nhảy vài độ khi xe đứng yên. Bus riêng này là I2C phần mềm, bật ở bước 3 bên dưới.
 
 Nối chéo TX–RX. Logic 3.3V ở cả hai phía nên nối thẳng. Đừng dùng GPIO1/3 của ESP32 (UART0, dính cổng USB nạp code); chân dùng cho Pi đặt ở `RPI_RX_PIN`, `RPI_TX_PIN` trong `config.h`.
 
