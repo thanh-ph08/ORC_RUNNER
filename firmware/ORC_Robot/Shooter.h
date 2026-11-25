@@ -45,7 +45,7 @@ void shooterUpdate(float dt) {
     if (!encFresh() && shooterOn && !shooterFault) {
       shooterFault = true;
       shooterOn = false;
-      Serial.println("[SHOOTER] Mất encoder (ESP32#2) => tắt bắn");
+      Log.println("[SHOOTER] Mất encoder (ESP32#2) => tắt bắn");
     }
     shooterPid.reset();
     shooterPwmOut = 0;
@@ -65,7 +65,7 @@ void shooterUpdate(float dt) {
     if (millis() - shooterSatSince > 1500) {
       shooterFault = true;
       shooterOn = false;
-      Serial.println("[SHOOTER] PWM tối đa mà không quay: kiểm tra encoder (SHOOTER_ENC_SIGN) / dây motor => tắt bắn");
+      Log.println("[SHOOTER] PWM tối đa mà không quay: kiểm tra encoder (SHOOTER_ENC_SIGN) / dây motor => tắt bắn");
     }
   } else shooterSatSince = 0;
 

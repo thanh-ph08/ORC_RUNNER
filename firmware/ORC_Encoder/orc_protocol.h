@@ -34,6 +34,8 @@
 #define FLOW_CMD_SET_POSE   0x10   // + float x_mm, float y_mm, float yaw_rad  (đặt toạ độ)
 #define FLOW_CMD_CAL_GYRO   0x11   // đo lại độ lệch gyro (xe phải đứng yên ~1.5 s)
 #define FLOW_CMD_CLEAR_RAW  0x12   // xoá bộ đếm thô (rawX, rawY, gyroDeg) để hiệu chỉnh
+#define FLOW_CMD_LOG        0x20   // + text UTF-8 (tối đa 30 byte): một mảnh log của ESP32#1, Pi ghép theo dấu xuống dòng
+#define FLOW_CMD_PING       0x21   // nhịp tim 1 lần/giây: Pi biết đường ESP32#1 -> Pi còn sống
 
 #define POSE_FLAG_IMU_OK   0x01
 #define POSE_FLAG_MOUSE_OK 0x02

@@ -22,16 +22,16 @@ void onConnectedController(ControllerPtr ctl) {
   if (pad == nullptr) {
     pad = ctl;
     ControllerProperties pr = ctl->getProperties();
-    Serial.printf("[PAD] Đã kết nối tay cầm: %s (VID=0x%04x PID=0x%04x)\n", ctl->getModelName().c_str(), pr.vendor_id, pr.product_id);
+    Log.printf("[PAD] Đã kết nối tay cầm: %s (VID=0x%04x PID=0x%04x)\n", ctl->getModelName().c_str(), pr.vendor_id, pr.product_id);
     ctl->setColorLED(0, 255, 0);
   } else {
-    Serial.println("[PAD] Đã có tay cầm, bỏ qua tay thứ hai");
+    Log.println("[PAD] Đã có tay cầm, bỏ qua tay thứ hai");
   }
 }
 void onDisconnectedController(ControllerPtr ctl) {
   if (pad == ctl) {
     pad = nullptr;
-    Serial.println("[PAD] Mất kết nối tay cầm!");
+    Log.println("[PAD] Mất kết nối tay cầm!");
   }
 }
 

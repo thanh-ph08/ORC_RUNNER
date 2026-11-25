@@ -51,16 +51,16 @@ void setPose(float x, float y, float th) {
 }
 void resetPoseToStart() {
   setPose(START_X_MM, START_Y_MM, START_TH_RAD);
-  Serial.println("[POSE] Đặt lại về điểm xuất phát");
+  Log.println("[POSE] Đặt lại về điểm xuất phát");
 }
-void flowCalibrateGyro() { uint8_t c = FLOW_CMD_CAL_GYRO; rpiSend(&c, 1); Serial.println("[POSE] Pi đo lại gyro: GIỮ YÊN XE ~2 s"); }
+void flowCalibrateGyro() { uint8_t c = FLOW_CMD_CAL_GYRO; rpiSend(&c, 1); Log.println("[POSE] Pi đo lại gyro: GIỮ YÊN XE ~2 s"); }
 void flowClearRaw()      { uint8_t c = FLOW_CMD_CLEAR_RAW; rpiSend(&c, 1); }
 
 static void applyPose(const PosePacket &p) {
   poseAckSeen = p.setAck;
   if (poseAwaitAck) {
     if (p.setAck == poseAckWanted) poseAwaitAck = false;
-    else if (millis() - poseAwaitMs > 200) { poseAwaitAck = false; Serial.println("[POSE] Pi không xác nhận lệnh đặt toạ độ"); }
+    else if (millis() - poseAwaitMs > 200) { poseAwaitAck = false; Log.println("[POSE] Pi không xác nhận lệnh đặt toạ độ"); }
     else return;                                   // gói cũ, chờ Pi áp dụng toạ độ mới
   }
   poseX = p.x; poseY = p.y; poseTh = p.yaw;

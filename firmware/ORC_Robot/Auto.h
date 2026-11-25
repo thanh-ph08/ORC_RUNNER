@@ -133,9 +133,9 @@ void poseControl(float tx, float ty, float tth, float ffx, float ffy, float ffw,
 
 // ============================ ĐIỀU KHIỂN =============================
 void startAuto() {
-  if (STEP_COUNT == 0) { Serial.println("[AUTO] path_data.h trống"); return; }
-  if (!poseFresh()) { Serial.println("[AUTO] Không bắt đầu: chưa có toạ độ từ RPi"); return; }
-  if (poseFlags & POSE_FLAG_CALIBRATING) { Serial.println("[AUTO] Không bắt đầu: RPi đang cân gyro, giữ yên xe"); return; }
+  if (STEP_COUNT == 0) { Log.println("[AUTO] path_data.h trống"); return; }
+  if (!poseFresh()) { Log.println("[AUTO] Không bắt đầu: chưa có toạ độ từ RPi"); return; }
+  if (poseFlags & POSE_FLAG_CALIBRATING) { Log.println("[AUTO] Không bắt đầu: RPi đang cân gyro, giữ yên xe"); return; }
   if (AUTO_RESET_POSE_ON_START) setPose(START_X_MM, START_Y_MM, START_TH_RAD);
   robotMode = RM_AUTO;
   autoStep = 0;
@@ -144,7 +144,7 @@ void startAuto() {
   autoStartMs = millis();
   resetPid();
   setPadColor(0, 0, 255);
-  Serial.printf("[AUTO] BẮT ĐẦU path \"%s\"\n", PATH_NAME);
+  Log.printf("[AUTO] BẮT ĐẦU path \"%s\"\n", PATH_NAME);
   beginStep();
 }
 
@@ -155,7 +155,7 @@ void stopAuto(const char *why) {
   asyncCustomId = -1;
   liftSetTarget(liftPosMM);          // giữ nguyên chiều cao đang đứng
   setPadColor(0, 255, 0);
-  Serial.printf("[AUTO] DỪNG: %s (%.1f s)\n", why, (millis() - autoStartMs) / 1000.0f);
+  Log.printf("[AUTO] DỪNG: %s (%.1f s)\n", why, (millis() - autoStartMs) / 1000.0f);
 }
 
 void nextStep() { autoStep++; beginStep(); }
@@ -164,7 +164,7 @@ void beginStep() {
   if (autoStep >= STEP_COUNT) {
     stopDrive();
     setPhase(AP_DONE);
-    Serial.printf("[AUTO] HOÀN THÀNH sau %.1f s\n", (millis() - autoStartMs) / 1000.0f);
+    Log.printf("[AUTO] HOÀN THÀNH sau %.1f s\n", (millis() - autoStartMs) / 1000.0f);
     return;
   }
   const AutoStep &s = STEPS[autoStep];
@@ -321,7 +321,7 @@ void autoUpdate(float dt) {
       if (done || (n == 0 && phaseMs() > timeout)) setPhase(AP_WALL_PUSH);   // không có công tắc: ép theo thời gian
       else if (phaseMs() > timeout) {
         if (hit) setPhase(AP_WALL_PUSH);
-        else { stopDrive(); Serial.println("[AUTO] Ép tường: không chạm, bỏ qua sửa vị trí"); nextStep(); }
+        else { stopDrive(); Log.println("[AUTO] Ép tường: không chạm, bỏ qua sửa vị trí"); nextStep(); }
       }
       break;
     }
@@ -334,7 +334,7 @@ void autoUpdate(float dt) {
         float oldX = poseX, oldY = poseY, oldTh = poseTh;
         setPose(poseX, poseY, wallTargetTh);
         setCoordFromWall(s.b, dist);
-        Serial.printf("[AUTO] Ép tường: sửa dx=%.0f dy=%.0f dθ=%.1f°\n", poseX - oldX, poseY - oldY,
+        Log.printf("[AUTO] Ép tường: sửa dx=%.0f dy=%.0f dθ=%.1f°\n", poseX - oldX, poseY - oldY,
                       (poseTh - oldTh) * RAD_TO_DEG);
         resetPid();
         nextStep();
@@ -369,7 +369,7 @@ bool runCustomAction(int id, float param, bool start) {
       return millis() - t0 >= 450;
 
     default:
-      Serial.printf("[AUTO] Hành động riêng id=%d chưa được viết\n", id);
+      Log.printf("[AUTO] Hành động riêng id=%d chưa được viết\n", id);
       return true;
   }
 }

@@ -46,8 +46,8 @@ void manualUpdate(float dt) {
   padLostSince = 0;
 
   if (padNow.l1 && padNow.r1 && PRESSED(start)) { startAuto(); return; }
-  if (PRESSED(thumbL)) { fieldCentric = !fieldCentric; Serial.printf("[MAN] Lái theo sân: %s\n", fieldCentric ? "BẬT" : "TẮT"); }
-  if (PRESSED(thumbR)) { headingHold = !headingHold; holdTarget = poseTh; Serial.printf("[MAN] Giữ hướng: %s\n", headingHold ? "BẬT" : "TẮT"); }
+  if (PRESSED(thumbL)) { fieldCentric = !fieldCentric; Log.printf("[MAN] Lái theo sân: %s\n", fieldCentric ? "BẬT" : "TẮT"); }
+  if (PRESSED(thumbR)) { headingHold = !headingHold; holdTarget = poseTh; Log.printf("[MAN] Giữ hướng: %s\n", headingHold ? "BẬT" : "TẮT"); }
   if (PRESSED(share)) resetPoseToStart();
 
   // ---- Di chuyển ----
@@ -86,9 +86,9 @@ void manualUpdate(float dt) {
   if (INTAKE_REVERSE_WITH_R1) intakeSetReverse(padNow.r1 && !padNow.l1);
 
   // ---- Shooter ----
-  if (PRESSED(cross)) { shooterToggle(); Serial.printf("[SHOOT] %s, mục tiêu %.0f rpm\n", shooterOn ? "BẬT" : "TẮT", shooterTargetRpm); }
-  if (PRESSED(left))  { shooterAdjust(-SHOOTER_RPM_STEP); Serial.printf("[SHOOT] mục tiêu %.0f rpm\n", shooterTargetRpm); }
-  if (PRESSED(right)) { shooterAdjust(+SHOOTER_RPM_STEP); Serial.printf("[SHOOT] mục tiêu %.0f rpm\n", shooterTargetRpm); }
+  if (PRESSED(cross)) { shooterToggle(); Log.printf("[SHOOT] %s, mục tiêu %.0f rpm\n", shooterOn ? "BẬT" : "TẮT", shooterTargetRpm); }
+  if (PRESSED(left))  { shooterAdjust(-SHOOTER_RPM_STEP); Log.printf("[SHOOT] mục tiêu %.0f rpm\n", shooterTargetRpm); }
+  if (PRESSED(right)) { shooterAdjust(+SHOOTER_RPM_STEP); Log.printf("[SHOOT] mục tiêu %.0f rpm\n", shooterTargetRpm); }
 
   // ---- Servo ----
   if (PRESSED(square)) gripToggle();

@@ -78,6 +78,8 @@ CMD_SYNC = (0xA5, 0x5A)           # ESP32 -> Pi : sync + len + payload + crc8(pa
 FLOW_CMD_SET_POSE = 0x10
 FLOW_CMD_CAL_GYRO = 0x11
 FLOW_CMD_CLEAR_RAW = 0x12
+FLOW_CMD_LOG = 0x20                # ESP32#1 -> Pi: mảnh log (text)
+FLOW_CMD_PING = 0x21               # ESP32#1 -> Pi: nhịp tim 1 Hz
 POSE_FLAG_IMU_OK = 0x01
 POSE_FLAG_MOUSE_OK = 0x02
 POSE_FLAG_CALIBRATING = 0x04
@@ -409,6 +411,9 @@ class Robot:
         self.cal_nb = 0
         self.cal_done_t = 0.0
         self.seen_resets = 0
+        self.esp_last = 0.0            # lần cuối nhận bất cứ gì từ ESP32#1
+        self.esp_pings = 0
+        self.esp_buf = bytearray()
         self.imu_n = 0                 # đếm mẫu để tính tần số đọc IMU (hiển thị trên trang web)
         self.imu_hz = 0.0
         self.imu_t0 = time.monotonic()
@@ -421,6 +426,24 @@ class Robot:
 
     # ---- lệnh từ ESP32#1 ----
     def handle_rx(self, rx: bytes):
+        self.esp_last = time.monotonic()
+        if rx and rx[0] == FLOW_CMD_PING:
+            self.esp_pings += 1
+            return
+        if rx and rx[0] == FLOW_CMD_LOG:               # ghép các mảnh thành dòng, in ra (trang web đọc từ đây)
+            self.esp_buf += rx[1:]
+            while True:
+                k = self.esp_buf.find(b"\n")
+                if k < 0:
+                    if len(self.esp_buf) > 300:        # dòng dài bất thường / mất dấu xuống dòng: đẩy ra luôn
+                        k = len(self.esp_buf)
+                    else:
+                        break
+                line = bytes(self.esp_buf[:k]).decode("utf-8", "replace").strip()
+                del self.esp_buf[:k + 1]
+                if line:
+                    print("[ESP32#1] " + line)
+            return
         i = 0
         while i < len(rx):
             cmd = rx[i]

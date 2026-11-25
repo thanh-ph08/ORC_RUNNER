@@ -23,10 +23,10 @@ static int lastGripDeg = -1, lastGuideDeg = -1;
 void servosBegin() {
   hubOk = ohstemHub.begin();
   if (!hubOk) {
-    Serial.println("[SERVO] Không thấy hub Ohstem driverV2 (0x54)! Servo sẽ không chạy.");
+    Log.println("[SERVO] Không thấy hub Ohstem driverV2 (0x54)! Servo sẽ không chạy.");
     return;
   }
-  Serial.printf("[SERVO] Hub OK, firmware %s\n", ohstemHub.firmwareVersion().c_str());
+  Log.printf("[SERVO] Hub OK, firmware %s\n", ohstemHub.firmwareVersion().c_str());
   gripServo.begin();
   guideServo.begin();
 }

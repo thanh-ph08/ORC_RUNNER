@@ -30,7 +30,7 @@ void liftZeroHere() {
   liftTargetMM = 0; liftPosMM = 0;
   liftPid.reset();
   liftFault = false;
-  Serial.println("[LIFT] Đặt 0 mm tại vị trí hiện tại");
+  Log.println("[LIFT] Đặt 0 mm tại vị trí hiện tại");
 }
 
 static void liftMeasure() {
@@ -85,7 +85,7 @@ void liftUpdate(float dt) {
     if (millis() - liftStallSince > LIFT_STALL_MS) {
       liftFault = true;
       motorSet(M_LIFT, 0);
-      Serial.println("[LIFT] Kẹt / sai chiều encoder (LIFT_ENC_SIGN, LIFT_DIR) => ngắt motor. Ra lệnh mới để thử lại");
+      Log.println("[LIFT] Kẹt / sai chiều encoder (LIFT_ENC_SIGN, LIFT_DIR) => ngắt motor. Ra lệnh mới để thử lại");
     }
   } else liftStallSince = 0;
 }

@@ -64,6 +64,7 @@ def _state(bot):
         "imu_temp": round(getattr(bot, "imu_temp", float("nan")), 1) if not math.isnan(getattr(bot, "imu_temp", float("nan"))) else None,
         "glitch": imu.glitch, "err": imu.err, "resets": imu.resets,
         "bias": [round(v, 3) for v in bot.bias],
+        "esp_age": (round(time.monotonic() - bot.esp_last, 1) if getattr(bot, "esp_last", 0) else None), "esp_pings": getattr(bot, "esp_pings", 0),
         "tx": bot.seq, "uptime": round(time.monotonic() - T0),
     }
 
@@ -83,13 +84,13 @@ main{display:grid;gap:12px;padding:12px 16px;grid-template-columns:repeat(auto-f
 .card b{font-size:22px;font-variant-numeric:tabular-nums;font-weight:600}.card span{color:var(--mu);font-size:12px}
 .wide{grid-column:1/-1}canvas{width:100%;height:240px;background:#0b0f14;border-radius:8px;display:block}
 #log{height:300px;overflow:auto;background:#0b0f14;border-radius:8px;padding:8px 10px;font:12px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap}
-#log div.e{color:var(--bad)}#log div.w{color:var(--warn)}#log i{color:var(--mu);font-style:normal;margin-right:8px}
+#log div.esp{color:#7fd6e8}#log.f-pi div.esp,#log.f-esp div.pi{display:none}#log div.e{color:var(--bad)}#log div.w{color:var(--warn)}#log i{color:var(--mu);font-style:normal;margin-right:8px}
 button{background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:5px 12px;cursor:pointer}
 button:hover{border-color:var(--ac)}.row{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px}
 </style></head><body>
 <header><h1>ORC Pi</h1>
 <span id="b_link" class="badge">đang kết nối…</span><span id="b_imu" class="badge">IMU</span>
-<span id="b_mouse" class="badge">chuột</span><span id="b_cal" class="badge" hidden>đang cân gyro — giữ yên xe</span>
+<span id="b_mouse" class="badge">chuột</span><span id="b_esp" class="badge">ESP32#1</span><span id="b_cal" class="badge" hidden>đang cân gyro — giữ yên xe</span>
 <span class="badge" id="b_up"></span></header>
 <main>
 <div class="card"><small>X (mm)</small><b id="x">–</b></div>
@@ -102,7 +103,7 @@ button:hover{border-color:var(--ac)}.row{display:flex;gap:8px;align-items:center
 <div class="card"><small>Lỗi cảm biến</small><b id="err">–</b><span>nhiễu / lỗi I2C / reset</span></div>
 <div class="card"><small>Bias gyro (dps)</small><b id="bias" style="font-size:15px">–</b></div>
 <div class="card wide"><div class="row"><small style="margin:0">Quỹ đạo (mm)</small><button onclick="trail=[]">Xoá quỹ đạo</button></div><canvas id="cv"></canvas></div>
-<div class="card wide"><div class="row"><small style="margin:0">Log</small><span><button onclick="dl()">Tải log</button> <button onclick="clr()">Xoá</button></span></div><div id="log"></div></div>
+<div class="card wide"><div class="row"><small style="margin:0">Log</small><span><button onclick="flt('')">Tất cả</button> <button onclick="flt('f-pi')">Pi</button> <button onclick="flt('f-esp')">ESP32#1</button> <button onclick="dl()">Tải log</button> <button onclick="clr()">Xoá</button></span></div><div id="log"></div></div>
 </main>
 <script>
 const $=id=>document.getElementById(id);let last=0,trail=[],lines=[],fails=0,cur=null;
@@ -118,14 +119,17 @@ function draw(){const c=$('cv'),r=c.getBoundingClientRect(),d=devicePixelRatio||
  if(cur){const px=X(cur.x),py=Y(cur.y),a=cur.yaw*Math.PI/180;g.fillStyle='#3ecf8e';g.beginPath();g.arc(px,py,6,0,7);g.fill();
   g.strokeStyle='#3ecf8e';g.beginPath();g.moveTo(px,py);g.lineTo(px+Math.cos(a)*18,py-Math.sin(a)*18);g.stroke();}}
 function addLog(seq,t,txt){const d=document.createElement('div');const u=txt.toLowerCase();
- if(/lỗi|thất bại|mất|!!|reset|bị động/.test(u))d.className='e';else if(/cảnh báo/.test(u))d.className='w';
+ d.className=txt.startsWith('[ESP32#1]')?'esp':'pi';
+ if(/lỗi|thất bại|mất|!!|reset|bị động/.test(u))d.className+=' e';else if(/cảnh báo/.test(u))d.className+=' w';
  d.innerHTML='<i>'+t+'</i>';d.appendChild(document.createTextNode(txt));const L=$('log'),b=L.scrollTop+L.clientHeight>=L.scrollHeight-30;
  L.appendChild(d);while(L.childNodes.length>500)L.removeChild(L.firstChild);if(b)L.scrollTop=L.scrollHeight;lines.push(t+' '+txt)}
+function flt(c){$('log').className=c;$('log').scrollTop=$('log').scrollHeight}
 function dl(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/plain'}));a.download='orc_pi_log.txt';a.click()}
 function clr(){$('log').innerHTML='';lines=[]}
 async function tick(){try{const r=await fetch('/api?since='+last,{cache:'no-store'});const j=await r.json();fails=0;const s=j.state;cur=s;
  badge($('b_link'),'đang nhận dữ liệu','ok');badge($('b_imu'),s.imu_name+(s.imu_ok?' OK':' LỖI'),s.imu_ok?'ok':'bad');
- badge($('b_mouse'),s.mouse?'chuột OK':'chưa thấy chuột',s.mouse?'ok':'bad');$('b_cal').hidden=!s.cal;$('b_up').textContent='chạy '+fmt(s.uptime);
+ badge($('b_mouse'),s.mouse?'chuột OK':'chưa thấy chuột',s.mouse?'ok':'bad');const ea=s.esp_age;badge($('b_esp'),ea===null?'ESP32#1: chưa nhận gì':(ea<3?'ESP32#1 → Pi OK':'ESP32#1 im lặng '+ea+'s'),ea===null?'warn':(ea<3?'ok':'bad'));
+ $('b_cal').hidden=!s.cal;$('b_up').textContent='chạy '+fmt(s.uptime);
  $('x').textContent=s.x;$('y').textContent=s.y;$('yaw').textContent=s.yaw;$('v').textContent=Math.hypot(s.vx,s.vy).toFixed(0);
  $('raw').textContent=s.raw[0]+', '+s.raw[1];$('gyro').textContent=s.gyro;$('imu_t').textContent=s.imu_name;
  $('imu').textContent=s.imu_hz+' Hz';$('imu2').textContent=s.imu_temp===null?'':s.imu_temp+' °C';
