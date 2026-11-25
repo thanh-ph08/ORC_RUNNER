@@ -3,7 +3,7 @@
 orc_pi.py — Raspberry Pi 3B+ : đọc cảm biến, tính toạ độ, gửi cho ESP32#1 qua UART.
 
 Việc của Pi:
-  1. Đọc BMI160 (I2C bus 3 phần mềm, GPIO5/6) -> bộ lọc Mahony (gyro + gia tốc) -> góc YAW
+  1. Đọc MPU6050/BMI160 (I2C bus 3 phần mềm, GPIO5/6) -> bộ lọc Mahony (gyro + gia tốc) -> góc YAW
   2. Đọc chuột USB (optical flow) bằng evdev -> dịch chuyển (count)
   3. Ghép: dùng yaw để (a) xoay dịch chuyển từ hệ xe sang hệ sân, (b) trừ phần chuyển động giả khi xe XOAY mà chuột
      không gắn đúng tâm quay (FLOW_POS_X/Y_MM) => toạ độ x, y, yaw (hệ sân)
@@ -12,7 +12,7 @@ Việc của Pi:
 ====== Đấu dây (số theo GPIO/BCM) ======
   UART tới ESP32#1:  Pi TXD GPIO14 (chân 8)  -> ESP32 GPIO34
                      Pi RXD GPIO15 (chân 10) <- ESP32 GPIO23          GND chung. Logic 3.3V cả hai phía.
-  BMI160 (I2C bus 3): SDA GPIO5 (chân 29), SCL GPIO6 (chân 31), 3V3, GND. Nằm PHẲNG, trục Z hướng LÊN.
+  IMU (I2C bus 3): SDA GPIO5 (chân 29), SCL GPIO6 (chân 31), 3V3, GND. Nằm PHẲNG, trục Z hướng LÊN.
                      SDO nối GND => 0x68, nối 3V3 => 0x69.
   Chuột:             cắm cổng USB của Pi (chuột optical, 800–1600 CPI, cách mặt sân 1–3 mm).
 
@@ -42,6 +42,8 @@ from evdev import ecodes
 SERIAL_PORT = "/dev/serial0"
 SERIAL_BAUD = 921600
 IMU_BUS = 3                         # bus I2C phần mềm riêng GPIO5/6 (dtoverlay=i2c-gpio,bus=3,...), tách khỏi ESP32
+IMU_TYPE = "mpu6050"               # "mpu6050" hoặc "bmi160"
+MPU6050_ADDR = 0x68                # 0x69 nếu chân AD0 nối 3V3
 BMI160_ADDR = 0x69                 # 0x68 nếu SDO nối GND
 
 # ---- Chuột optical flow ----
@@ -102,10 +104,14 @@ def wrap_pi(a: float) -> float:
 # ============================== BMI160 ===============================
 # =====================================================================
 class Bmi160:
+    NAME = "BMI160"
+    GYRO_LSB = 32.8            # LSB/dps ở ±1000 dps
+    ACC_LSB = 8192.0           # LSB/g ở ±4 g
+
     def __init__(self, bus_no=IMU_BUS, addr=BMI160_ADDR):
         if not os.path.exists(f"/dev/i2c-{bus_no}"):
             print(f"[IMU] CẢNH BÁO: chưa có /dev/i2c-{bus_no} (chưa thêm dtoverlay i2c-gpio trong config.txt), "
-                  f"tạm dùng bus 1 — BMI160 phải nằm ở GPIO2/3. Nên tách bus riêng, xem README.")
+                  f"tạm dùng bus 1 — cảm biến phải nằm ở GPIO2/3. Nên tách bus riêng, xem README.")
             bus_no = 1
         self.bus = SMBus(bus_no)
         self.addr = addr
@@ -121,7 +127,7 @@ class Bmi160:
         try:
             cid = self.bus.read_byte_data(self.addr, 0x00)
         except OSError as e:
-            print(f"[IMU] Không đọc được BMI160: {e}")
+            print(f"[IMU] Không đọc được {self.NAME}: {e}")
             return False
         if cid != 0xD1:
             print(f"[IMU] Sai ID 0x{cid:02X}, cần 0xD1")
@@ -164,21 +170,26 @@ class Bmi160:
         t = struct.unpack("<h", bytes([lo, hi]))[0]
         return 23.0 + t / 512.0
 
+    def _raw(self):
+        """-> (gx, gy, gz, ax, ay, az) số nguyên thô; ném OSError nếu bus lỗi"""
+        b = self.bus.read_i2c_block_data(self.addr, 0x0C, 12)
+        return struct.unpack("<6h", bytes(b))
+
     def read(self):
         """-> (gx, gy, gz [dps], ax, ay, az [g]) hoặc None"""
         try:
-            b = self.bus.read_i2c_block_data(self.addr, 0x0C, 12)
+            v = self._raw()
         except OSError:
             self.err += 1
             self._fail()
             return None
-        v = struct.unpack("<6h", bytes(b))
-        if not any(v):                         # toàn 0 = chip đang ở chế độ ngủ (vừa bị reset do sụt nguồn / lỗi bus)
+        if not any(v) or all(x == -1 for x in v):   # toàn 0 / toàn 0xFF = chip ngủ (vừa reset) hoặc bus chết
             self.glitch += 1
             self._fail()
             return None
         self.fail_run = 0
-        s = (v[0] / 32.8, v[1] / 32.8, v[2] / 32.8, v[3] / 8192.0, v[4] / 8192.0, v[5] / 8192.0)
+        g, a = self.GYRO_LSB, self.ACC_LSB
+        s = (v[0] / g, v[1] / g, v[2] / g, v[3] / a, v[4] / a, v[5] / a)
         # Loại mẫu hỏng do nhiễu/va chạm trên bus I2C: tràn thang đo, toàn 0, hoặc nhảy vọt không thể có
         bad = any(x in (-32768, 32767) for x in v) or not any(v) \
             or abs(s[3]) > 4.5 or abs(s[4]) > 4.5 or abs(s[5]) > 4.5
@@ -191,6 +202,53 @@ class Bmi160:
         self.rej_run = 0
         self.last = s
         return s
+
+
+class Mpu6050(Bmi160):
+    """MPU6050 (GY-521): cùng giao diện với Bmi160, dữ liệu big-endian từ 0x3B."""
+    NAME = "MPU6050"
+    GYRO_LSB = 32.8            # ±1000 dps
+    ACC_LSB = 8192.0           # ±4 g
+    WHO_OK = (0x68, 0x69, 0x70, 0x71, 0x72, 0x73, 0x98)   # MPU6050 và vài bản clone/MPU6500
+
+    def __init__(self, bus_no=IMU_BUS, addr=MPU6050_ADDR):
+        super().__init__(bus_no, addr)
+
+    def begin(self) -> bool:
+        try:
+            who = self.bus.read_byte_data(self.addr, 0x75)
+        except OSError as e:
+            print(f"[IMU] Không đọc được {self.NAME}: {e}")
+            return False
+        if who not in self.WHO_OK:
+            print(f"[IMU] WHO_AM_I = 0x{who:02X}, không phải MPU6050 (cần 0x68)")
+            return False
+        w = lambda r, v: self.bus.write_byte_data(self.addr, r, v)
+        w(0x6B, 0x80); time.sleep(0.1)     # reset thiết bị
+        w(0x6B, 0x01); time.sleep(0.05)    # thoát chế độ ngủ, xung nhịp PLL theo gyro X
+        w(0x68, 0x07); time.sleep(0.1)     # reset đường tín hiệu gyro/accel/temp
+        w(0x19, 0x00)                      # SMPLRT_DIV = 0 (1 kHz)
+        w(0x1A, 0x03)                      # DLPF ~44 Hz: lọc rung/nhiễu
+        w(0x1B, 0x10)                      # gyro ±1000 dps (32.8 LSB/dps)
+        w(0x1C, 0x08)                      # accel ±4 g (8192 LSB/g)
+        time.sleep(0.1)
+        return True
+
+    def _raw(self):
+        b = self.bus.read_i2c_block_data(self.addr, 0x3B, 14)
+        ax, ay, az, _t, gx, gy, gz = struct.unpack(">7h", bytes(b))
+        return (gx, gy, gz, ax, ay, az)
+
+    def read_temp(self):
+        try:
+            hi, lo = self.bus.read_i2c_block_data(self.addr, 0x41, 2)
+        except OSError:
+            return float("nan")
+        return struct.unpack(">h", bytes([hi, lo]))[0] / 340.0 + 36.53
+
+
+def make_imu():
+    return Mpu6050() if IMU_TYPE.lower() == "mpu6050" else Bmi160()
 
 
 # =====================================================================
@@ -304,7 +362,7 @@ class MouseReader(threading.Thread):
 # =====================================================================
 class Robot:
     def __init__(self):
-        self.imu = Bmi160()
+        self.imu = make_imu()
         self.imu_ok = self.imu.begin()
         self.ahrs = Mahony()
         self.mouse = MouseReader()
@@ -500,8 +558,8 @@ class CmdParser:
 
 
 def imu_test(seconds=60):
-    """python3 orc_pi.py --imu-test : đo thô BMI160 để biết gyro tự trôi hay do code. Để xe YÊN."""
-    imu = Bmi160()
+    """python3 orc_pi.py --imu-test : đo thô IMU để biết gyro tự trôi hay do code. Để xe YÊN."""
+    imu = make_imu()
     if not imu.begin():
         return
     print("Giây | gyro thô gx gy gz (dps, trung bình 1 s) | |a| (g) | nhiệt độ | mẫu | nhiễu | lỗi")

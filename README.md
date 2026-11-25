@@ -101,10 +101,10 @@ Dây đỏ = nguồn, đen = GND, 2 dây còn lại = A, B (collector hở). **C
 | UART TX | GPIO14 (chân 8, TXD) | ESP32#1 GPIO34 (RX, chỉ nhận vào) |
 | UART RX | GPIO15 (chân 10, RXD) | ESP32#1 GPIO23 (TX) |
 | GND | chân 6 | GND ESP32#1 |
-| BMI160 SDA / SCL | **GPIO5 (chân 29) / GPIO6 (chân 31)** | BMI160, cấp 3V3 (chân 1), GND (chân 9). Nằm phẳng, trục Z hướng lên |
+| IMU (MPU6050 mặc định) SDA / SCL | **GPIO5 (chân 29) / GPIO6 (chân 31)** | MPU6050/BMI160, cấp 3V3 (chân 1), GND (chân 9). MPU6050: AD0 nối GND (địa chỉ 0x68). Nằm phẳng, trục Z hướng lên |
 | Chuột optical | cổng USB | |
 
-**BMI160 phải nằm trên bus I2C riêng của Pi (GPIO5/6), KHÔNG nối chung với SDA/SCL của ESP32#1 (GPIO21/22) và hub Ohstem.** Nối chung thì Pi và ESP32 tranh bus, gyro đọc ra mẫu hỏng làm yaw nhảy vài độ khi xe đứng yên. Dây GPIO2/3 (chân 3, 5) của Pi để trống. Bus riêng này là I2C phần mềm, bật ở bước 3 bên dưới.
+**IMU phải nằm trên bus I2C riêng của Pi (GPIO5/6), KHÔNG nối chung với SDA/SCL của ESP32#1 (GPIO21/22) và hub Ohstem.** Nối chung thì Pi và ESP32 tranh bus, gyro đọc ra mẫu hỏng làm yaw nhảy vài độ khi xe đứng yên. Dây GPIO2/3 (chân 3, 5) của Pi để trống. Bus riêng này là I2C phần mềm, bật ở bước 3 bên dưới.
 
 Nối chéo TX–RX. Logic 3.3V ở cả hai phía nên nối thẳng. Đừng dùng GPIO1/3 của ESP32 (UART0, dính cổng USB nạp code); chân dùng cho Pi đặt ở `RPI_RX_PIN`, `RPI_TX_PIN` trong `config.h`.
 
@@ -134,10 +134,10 @@ Hub Ohstem **driverV2** (I2C 0x54) với thư viện OhStemRobotics: servo 1 = g
    enable_uart=1
    dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=5,i2c_gpio_scl=6,i2c_gpio_delay_us=2
    ```
-   rồi `sudo reboot`. Dòng cuối tạo bus I2C riêng `/dev/i2c-3` (SDA GPIO5, SCL GPIO6) cho BMI160; `orc_pi.py` dùng `IMU_BUS = 3`.
+   rồi `sudo reboot`. Dòng cuối tạo bus I2C riêng `/dev/i2c-3` (SDA GPIO5, SCL GPIO6) cho BMI160; `orc_pi.py` dùng `IMU_BUS = 3`. Chọn cảm biến bằng `IMU_TYPE = "mpu6050"` hoặc `"bmi160"` đầu file. Đặt IMU xa L298N và motor ít nhất 10 cm, đệm xốp, nằm phẳng.
 4. **Kiểm tra sau khi khởi động lại**:
    - `ls -l /dev/serial0` phải trỏ tới `ttyAMA0`.
-   - `sudo i2cdetect -y 3` chỉ thấy `68` hoặc `69` (BMI160), không thấy `54`. Thấy `54` nghĩa là dây còn nối chung bus với ESP32/hub.
+   - `sudo i2cdetect -y 3` chỉ thấy `68` (MPU6050) hoặc `69`, không thấy `54`. Thấy `54` nghĩa là dây còn nối chung bus với ESP32/hub.
    - Cắm chuột rồi `sudo apt install -y evtest && sudo evtest`: chọn thiết bị chuột, di chuyển thì thấy REL_X / REL_Y.
 5. **Cài thư viện và lấy code**:
    ```
@@ -146,7 +146,7 @@ Hub Ohstem **driverV2** (I2C 0x54) với thư viện OhStemRobotics: servo 1 = g
    git clone https://github.com/thanh-ph08/ORC_RUNNER.git
    cd ORC_RUNNER/firmware/ORC_Pi
    ```
-6. **Sửa hằng số nếu cần** (`nano orc_pi.py`): địa chỉ BMI160 (`0x68`/`0x69`), `FLOW_POS_X/Y_MM`, v.v. (xem mục hiệu chỉnh).
+6. **Sửa hằng số nếu cần** (`nano orc_pi.py`): `IMU_TYPE` và địa chỉ (`MPU6050_ADDR`/`BMI160_ADDR`), `FLOW_POS_X/Y_MM`, v.v. (xem mục hiệu chỉnh).
 7. **Chạy thử**: `sudo python3 orc_pi.py`. Giữ yên xe khoảng 2,5 s, màn hình phải in `[IMU] bias = ...` (nếu xe bị động đậy sẽ tự đo lại) rồi mỗi 0,5 s một dòng `x=... y=... yaw=... | chuột:OK | IMU:OK nhiễu=0 lỗiI2C=0`. Xe để yên 1 phút mà `nhiễu` hoặc `lỗiI2C` cứ tăng là dây I2C của BMI160 có vấn đề (dây dài, tiếp xúc kém, chung bus). Bật ESP32#1: Serial Monitor phải in toạ độ và không còn dòng "mất Raspberry Pi".
 8. **Tự chạy khi bật Pi**: sửa đường dẫn `ExecStart` trong `orc-pi.service` cho đúng user của bạn, rồi
    ```
