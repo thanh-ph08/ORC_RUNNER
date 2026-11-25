@@ -134,7 +134,7 @@ const Core = (() => {
   const WALLS = ['left', 'right', 'bottom', 'top'];
   const WALL_NORMAL = { left: 180, right: 0, bottom: -90, top: 90 };
   const WALL_VN = { left: 'trái (x=0)', right: 'phải (x=W)', bottom: 'dưới (y=0)', top: 'trên (y=H)' };
-  const ST = { FOLLOW: 0, LIFT: 1, WAIT: 2, WALL: 3, TOF: 4, CUSTOM: 5 };
+  const ST = { FOLLOW: 0, LIFT: 1, WAIT: 2, WALL: 3, TOF: 4, CUSTOM: 5, INTAKE: 6, SHOOTER: 7, GRIP: 8, GUIDE: 9 };
   const SF_ASYNC = 1, SF_CONTINUE = 2;
   const cm = mm => Math.round(mm) / 10;
 
@@ -520,6 +520,10 @@ const Core = (() => {
         const async = !stopHere || !a.wait;
         if (a.type === 'lift') steps.push({ type: ST.LIFT, flags: async ? SF_ASYNC : 0, a: 0, b: 0, p1: +a.mm || 0, p2: 0, label: `#${idx} lift ${cm(a.mm)}cm` });
         else if (a.type === 'custom') steps.push({ type: ST.CUSTOM, flags: async ? SF_ASYNC : 0, a: a.id | 0, b: 0, p1: +a.param || 0, p2: 0, label: `#${idx} custom ${a.id}` });
+        else if (a.type === 'intake') { const m = a.mode === 'on' ? 1 : a.mode === 'rev' ? -1 : 0; steps.push({ type: ST.INTAKE, flags: 0, a: 0, b: 0, p1: m, p2: 0, label: `#${idx} intake ${a.mode === 'on' ? 'bật' : a.mode === 'rev' ? 'đảo' : 'tắt'}` }); }
+        else if (a.type === 'shooter') { const r = a.rpm > 0 ? Math.round(a.rpm) : 0; steps.push({ type: ST.SHOOTER, flags: async ? SF_ASYNC : 0, a: 0, b: 0, p1: r, p2: 0, label: `#${idx} bắn ${r ? r + 'rpm' : 'tắt'}` }); }
+        else if (a.type === 'grip') steps.push({ type: ST.GRIP, flags: async ? SF_ASYNC : 0, a: 0, b: 0, p1: a.close ? 1 : 0, p2: 0, label: `#${idx} ${a.close ? 'gắp' : 'nhả'}` });
+        else if (a.type === 'guide') { const sp = Math.max(-100, Math.min(100, Math.round(+a.speed || 0))); steps.push({ type: ST.GUIDE, flags: async ? SF_ASYNC : 0, a: 0, b: 0, p1: sp, p2: Math.max(0, Math.round(+a.ms || 0)), label: `#${idx} dẫn bóng ${sp}%${a.ms > 0 ? ' ' + a.ms + 'ms' : ''}` }); }
         else if (!stopHere) warnings.push(`Điểm #${idx}: "${a.type}" chỉ chạy ở điểm Dừng → bỏ qua.`);
         else if (a.type === 'wait') steps.push({ type: ST.WAIT, flags: 0, a: 0, b: 0, p1: +a.ms || 0, p2: 0, label: `#${idx} chờ ${a.ms}ms` });
         else if (a.type === 'wall') {
@@ -572,6 +576,9 @@ const Core = (() => {
       else if (s.type === ST.LIFT) { if (!(s.flags & SF_ASYNC)) dur = Math.abs(s.p1 - liftH) / robot.liftSpeed; liftH = s.p1; }
       else if (s.type === ST.WALL) dur = 1.5;
       else if (s.type === ST.CUSTOM) dur = (s.flags & SF_ASYNC) ? 0 : 0.5;
+      else if (s.type === ST.SHOOTER) dur = (s.flags & SF_ASYNC) || !s.p1 ? 0 : 1.5;
+      else if (s.type === ST.GRIP) dur = (s.flags & SF_ASYNC) ? 0 : 0.35;
+      else if (s.type === ST.GUIDE) dur = (s.flags & SF_ASYNC) ? 0 : s.p2 / 1000;
       schedule.push({ step: s, t0: t, t1: t + dur }); t += dur;
     }
     return { traj, steps, warnings, T: t, schedule, hits };
@@ -618,11 +625,13 @@ const Core = (() => {
     L.push(`#ifndef ORC_PATH_TYPES`);
     L.push(`#define ORC_PATH_TYPES`);
     L.push(`struct TrajPt { float x, y, th, vx, vy, w; };  // mm, mm, rad, mm/s, mm/s, rad/s (hệ sân)`);
-    L.push(`enum StepType : uint8_t { ST_FOLLOW = 0, ST_LIFT = 1, ST_WAIT = 2, ST_WALL = 3, ST_TOF = 4, ST_CUSTOM = 5 };`);
+    L.push(`enum StepType : uint8_t { ST_FOLLOW = 0, ST_LIFT = 1, ST_WAIT = 2, ST_WALL = 3, ST_TOF = 4, ST_CUSTOM = 5, ST_INTAKE = 6, ST_SHOOTER = 7, ST_GRIP = 8, ST_GUIDE = 9 };`);
     L.push(`#define SF_ASYNC    0x01  // không chờ xong, chạy bước tiếp ngay`);
     L.push(`#define SF_CONTINUE 0x02  // FOLLOW: không dừng ở cuối đoạn`);
     L.push(`// FOLLOW: a..b = chỉ số mẫu | LIFT: p1 = mm | WAIT: p1 = ms`);
     L.push(`// WALL: a = mặt robot (0 trước,1 trái,2 sau,3 phải), b = tường (0 trái,1 phải,2 dưới,3 trên), p1 = timeout ms`);
+    L.push(`// INTAKE: p1 = 1 bật, 0 tắt, -1 đảo chiều | SHOOTER: p1 = rpm (0 = tắt), không async thì chờ đủ tốc độ`);
+    L.push(`// GRIP: p1 = 1 gắp (đóng), 0 nhả (mở) | GUIDE: p1 = tốc độ -100..100 %, p2 = thời gian chạy ms (0 = chạy mãi)`);
     L.push(`// CUSTOM: a = id, p1 = tham số   (ST_TOF giữ lại cho tương thích, không còn dùng)`);
     L.push(`struct AutoStep { uint8_t type; uint8_t flags; int32_t a; int32_t b; float p1; float p2; };`);
     L.push(`#endif`);
@@ -723,7 +732,9 @@ const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).
 function handlePos(i) { const p = S.points[i], L = Math.max(S.robot.len, S.robot.wid) * 0.85; return [p.x + L * Math.cos(p.th * C.D2R), p.y + L * Math.sin(p.th * C.D2R)]; }
 function badge(p) {
   return (p.actions || []).map(a => a.type === 'lift' ? `⬆${cm(a.mm)}` : a.type === 'wait' ? `⏱${a.ms}` : a.type === 'wall' ? `▮${C.SIDE_VN[a.side][0].toUpperCase()}` :
-    a.type === 'tof' ? '⚠ToF' : `★${a.id}`).join(' ');
+    a.type === 'tof' ? '⚠ToF' : a.type === 'intake' ? (a.mode === 'on' ? '⟳in' : a.mode === 'rev' ? '⟲in' : '⏹in') :
+    a.type === 'shooter' ? (a.rpm > 0 ? `🎯${Math.round(a.rpm)}` : '🎯0') : a.type === 'grip' ? (a.close ? '✊' : '🖐') :
+    a.type === 'guide' ? `➜${a.speed}` : `★${a.id}`).join(' ');
 }
 let hatch = null;
 function hatchPattern() {
@@ -938,9 +949,15 @@ function kindSeg(r) {
   return el('div', { class: 'seg' }, mk('none', 'Bỏ qua'), mk('avoid', '⛔ Tránh'), mk('object', '★ Vật'));
 }
 
-const ACTION_TYPES = [['lift', '⬆ Nâng/hạ lift'], ['wait', '⏱ Chờ'], ['wall', '▮ Ép tường (sửa vị trí)'], ['custom', '★ Hành động riêng']];
+const ACTION_TYPES = [['lift', '⬆ Nâng/hạ lift'], ['intake', '⟳ Intake (hút bóng)'], ['shooter', '🎯 Bắn banh'], ['grip', '✊ Gắp / nhả (servo 1)'],
+  ['guide', '➜ Dẫn bóng (servo 2)'], ['wait', '⏱ Chờ'], ['wall', '▮ Ép tường (sửa vị trí)'], ['custom', '★ Hành động riêng']];
+const PARALLEL_OK = ['lift', 'custom', 'intake', 'shooter', 'grip', 'guide'];   // chạy được ở điểm đi qua (song song)
 function newAction(type, p) {
   if (type === 'lift') return { type, mm: 200, wait: true };
+  if (type === 'intake') return { type, mode: 'on' };
+  if (type === 'shooter') return { type, rpm: 3000, wait: true };
+  if (type === 'grip') return { type, close: true, wait: true };
+  if (type === 'guide') return { type, speed: 100, ms: 400, wait: true };
   if (type === 'wait') return { type, ms: 500 };
   if (type === 'wall') { const wall = C.nearestWall(p, S.field); return { type, wall, side: C.sideFromAngle(C.WALL_NORMAL[wall] - p.th), timeout: 2000 }; }
   return { type: 'custom', id: 1, param: 0, wait: true, note: '' };
@@ -957,6 +974,23 @@ function actionCard(p, a, k, stopHere) {
     body.append(numCm('Độ cao lift (cm)', () => a.mm, v => a.mm = v));
     if (stopHere) body.append(chk('Chờ lift tới nơi rồi mới đi tiếp', () => a.wait, v => a.wait = v));
     else body.append(el('div', { class: 'hint' }, 'Điểm đi qua: lift chạy song song khi xe đang chạy.'));
+  } else if (a.type === 'intake') {
+    body.append(sel_('Chế độ', [['on', 'Bật (hút vào)'], ['off', 'Tắt'], ['rev', 'Đảo chiều (xả)']], () => a.mode, v => a.mode = v));
+    body.append(el('div', { class: 'hint' }, 'Chạy ngay, không chờ. Motor intake vẫn quay cho tới khi có hành động Tắt khác.'));
+  } else if (a.type === 'shooter') {
+    body.append(num('Tốc độ bắn (rpm, 0 = tắt)', () => a.rpm, v => a.rpm = Math.max(0, v), { step: 100 }));
+    body.append(chk(stopHere ? 'Chờ đủ tốc độ rồi mới đi tiếp' : 'Chờ đủ tốc độ', () => a.wait, v => a.wait = v));
+    if (!stopHere) body.append(el('div', { class: 'hint' }, 'Điểm đi qua: xe không dừng, bánh bắn tăng tốc song song khi xe đang chạy.'));
+    else body.append(el('div', { class: 'hint' }, 'PID tốc độ dùng encoder. Tối đa chờ 4 giây rồi vẫn đi tiếp.'));
+  } else if (a.type === 'grip') {
+    body.append(sel_('Servo 1', [['1', '✊ Gắp (đóng)'], ['0', '🖐 Nhả (mở)']], () => a.close ? '1' : '0', v => a.close = v === '1'));
+    if (stopHere) body.append(chk('Chờ servo xong (0,35 s) rồi mới đi tiếp', () => a.wait, v => a.wait = v));
+    body.append(el('div', { class: 'hint' }, 'Góc mở/đóng chỉnh ở GRIP_OPEN_DEG / GRIP_CLOSE_DEG trong config.h.'));
+  } else if (a.type === 'guide') {
+    body.append(el('div', { class: 'row' }, num('Tốc độ (%, âm = quay ngược)', () => a.speed, v => a.speed = Math.max(-100, Math.min(100, v)), { step: 10 }),
+      num('Thời gian (ms, 0 = chạy mãi)', () => a.ms, v => a.ms = Math.max(0, v), { step: 50 })));
+    if (stopHere) body.append(chk('Chờ chạy xong rồi mới đi tiếp', () => a.wait, v => a.wait = v));
+    body.append(el('div', { class: 'hint' }, 'Servo 2 xoay 360°. Tốc độ 0 = dừng.'));
   } else if (a.type === 'wait') body.append(num('Thời gian chờ (ms)', () => a.ms, v => a.ms = v));
   else if (a.type === 'wall') {
     body.append(el('div', { class: 'row' }, sel_('Mặt robot chạm', sides, () => a.side, v => a.side = v), sel_('Tường', walls, () => a.wall, v => a.wall = v)));
@@ -972,7 +1006,7 @@ function actionCard(p, a, k, stopHere) {
     if (stopHere) body.append(chk('Chờ hành động xong', () => a.wait, v => a.wait = v));
     body.append(el('div', { class: 'hint' }, 'Viết code cho ID này trong hàm runCustomAction() ở Auto.ino.'));
   }
-  if (!stopHere && !['lift', 'custom'].includes(a.type)) body.append(el('div', { class: 'warn' }, '⚠ Hành động này chỉ chạy ở điểm Dừng.'));
+  if (!stopHere && !PARALLEL_OK.includes(a.type)) body.append(el('div', { class: 'warn' }, '⚠ Hành động này chỉ chạy ở điểm Dừng.'));
   return el('div', { class: 'card' }, hd, body);
 }
 
@@ -1018,9 +1052,9 @@ function renderPane() {
     if (sel > 0 && S.regions.some(r => r.kind === 'avoid')) extra.append(el('button', { onclick: () => { snapshot(); const n = C.avoidSegment(S, sel - 1); if (n > 0) { sel += n; toast(`Đã chèn ${n} điểm để né`); } else if (n === 0) toast('Đoạn này không chạm vùng tránh'); else toast('Không tìm được đường né'); changed(true); } }, `⛔ Né vùng tránh đoạn #${sel - 1}→#${sel}`));
     if (extra.childNodes.length) pane.append(extra);
     pane.append(el('h3', {}, `Hành động tại điểm #${sel}`));
-    if (!p.actions.length) pane.append(el('div', { class: 'hint' }, stopHere ? 'Chưa có. Các hành động chạy lần lượt sau khi xe dừng.' : 'Chưa có. Điểm đi qua chỉ nhận lift / hành động riêng (chạy song song).'));
+    if (!p.actions.length) pane.append(el('div', { class: 'hint' }, stopHere ? 'Chưa có. Các hành động chạy lần lượt sau khi xe dừng.' : 'Chưa có. Điểm đi qua nhận lift / intake / bắn / gắp / dẫn bóng / hành động riêng (chạy song song).'));
     p.actions.forEach((a, k) => pane.append(actionCard(p, a, k, stopHere)));
-    const pick = el('select'); ACTION_TYPES.forEach(([v, t]) => { if (stopHere || v === 'lift' || v === 'custom') pick.append(el('option', { value: v }, t)); });
+    const pick = el('select'); ACTION_TYPES.forEach(([v, t]) => { if (stopHere || PARALLEL_OK.includes(v)) pick.append(el('option', { value: v }, t)); });
     pane.append(el('div', { class: 'row', style: 'margin-top:8px' }, pick, el('button', { class: 'pri', onclick: () => { snapshot(); p.actions.push(newAction(pick.value, p)); changed(true); } }, 'Thêm hành động')));
   } else if (tab === 'map') {
     const f = S.field;

@@ -1,5 +1,5 @@
 // path_data.h — tạo bởi ORC Path Planner
-// Path: demo   |   18:48:28 17/11/2026
+// Path: demo   |   09:11:13 25/11/2026
 // 6 điểm, 488 mẫu (20 ms), 11 bước, ~12.8 s
 // Sân 364 x 364 cm, robot 40 x 40 cm
 // Đơn vị trong file: mm. Gốc góc dưới-trái sân, x sang phải, y lên trên. θ: rad, ngược chiều kim đồng hồ, 0 = hướng +x.
@@ -19,11 +19,13 @@
 #ifndef ORC_PATH_TYPES
 #define ORC_PATH_TYPES
 struct TrajPt { float x, y, th, vx, vy, w; };  // mm, mm, rad, mm/s, mm/s, rad/s (hệ sân)
-enum StepType : uint8_t { ST_FOLLOW = 0, ST_LIFT = 1, ST_WAIT = 2, ST_WALL = 3, ST_TOF = 4, ST_CUSTOM = 5 };
+enum StepType : uint8_t { ST_FOLLOW = 0, ST_LIFT = 1, ST_WAIT = 2, ST_WALL = 3, ST_TOF = 4, ST_CUSTOM = 5, ST_INTAKE = 6, ST_SHOOTER = 7, ST_GRIP = 8, ST_GUIDE = 9 };
 #define SF_ASYNC    0x01  // không chờ xong, chạy bước tiếp ngay
 #define SF_CONTINUE 0x02  // FOLLOW: không dừng ở cuối đoạn
 // FOLLOW: a..b = chỉ số mẫu | LIFT: p1 = mm | WAIT: p1 = ms
 // WALL: a = mặt robot (0 trước,1 trái,2 sau,3 phải), b = tường (0 trái,1 phải,2 dưới,3 trên), p1 = timeout ms
+// INTAKE: p1 = 1 bật, 0 tắt, -1 đảo chiều | SHOOTER: p1 = rpm (0 = tắt), không async thì chờ đủ tốc độ
+// GRIP: p1 = 1 gắp (đóng), 0 nhả (mở) | GUIDE: p1 = tốc độ -100..100 %, p2 = thời gian chạy ms (0 = chạy mãi)
 // CUSTOM: a = id, p1 = tham số   (ST_TOF giữ lại cho tương thích, không còn dùng)
 struct AutoStep { uint8_t type; uint8_t flags; int32_t a; int32_t b; float p1; float p2; };
 #endif

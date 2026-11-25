@@ -1,65 +1,72 @@
 /*
- * Auto.ino — FILE PHỤ: CHẠY TỰ ĐỘNG theo path_data.h
+ * Auto.h — CHẠY TỰ ĐỘNG theo path_data.h (tạo bởi app ORC Path Planner)
  *
- * Mỗi bước trong STEPS[] (tạo bởi app):
- *   FOLLOW : bám quỹ đạo TRAJ[a..b] = feedforward vận tốc + PID vị trí x, y, θ
- *   LIFT   : đưa lift tới p1 mm (có thể chạy song song)
- *   WAIT   : chờ p1 ms
- *   WALL   : chạy chậm vào tường tới khi công tắc chạm => đặt lại toạ độ + góc
- *   CUSTOM : gọi runCustomAction(id, tham số) — tự viết ở cuối file này
+ * Mỗi bước trong STEPS[]:
+ *   FOLLOW  : bám quỹ đạo TRAJ[a..b] = feedforward vận tốc + PID vị trí x, y, θ (toạ độ từ Pico)
+ *   LIFT    : đưa lift tới p1 mm (PID encoder), chờ hoặc chạy song song
+ *   WAIT    : chờ p1 ms
+ *   WALL    : chạy chậm vào tường (công tắc chạm hoặc theo thời gian) => đặt lại toạ độ + góc
+ *   INTAKE  : p1 = 1 bật, 0 tắt, -1 đảo chiều
+ *   SHOOTER : p1 = rpm (0 = tắt); không async thì chờ tới khi đủ tốc độ
+ *   GRIP    : p1 = 1 gắp (đóng), 0 nhả (mở)
+ *   GUIDE   : servo dẫn bóng, p1 = tốc độ -100..100 % (0 = dừng), p2 = thời gian chạy ms (0 = chạy mãi)
+ *   CUSTOM  : gọi runCustomAction(id, tham số) — tự viết ở cuối file này
  *
- * Không có encoder nên quỹ đạo có "đồng hồ co giãn": robot tụt lại xa điểm đích
+ * Không có encoder bánh nên quỹ đạo có "đồng hồ co giãn": robot tụt lại xa điểm đích
  * thì đồng hồ chạy chậm lại / dừng, chờ robot bắt kịp (không bị cắt góc).
+ * Mất tín hiệu Pico (toạ độ) => dừng ngay.
  */
+#pragma once
+#include "path_data.h"
+#include "config.h"
+#include "Common.h"
+#include "Odometry.h"
+#include "Drive.h"
+#include "Pad.h"
+#include "Intake.h"
+#include "Shooter.h"
+#include "Lift.h"
+#include "Servos.h"
 
-// ============================ THAM SỐ PID ============================
+// ============================ THAM SỐ PID BÁM PATH ============================
 const float AUTO_KP_XY = 3.0f;      // (mm/s) cho mỗi mm sai số
 const float AUTO_KI_XY = 0.8f;
 const float AUTO_KD_XY = 0.0f;
-const float AUTO_I_MAX_MMS = 150.0f;   // giới hạn phần I (mm/s)
+const float AUTO_I_MAX_MMS = 150.0f;
 const float AUTO_KP_TH = 4.0f;      // (rad/s) cho mỗi rad sai số
 const float AUTO_KI_TH = 0.5f;
-const float AUTO_I_MAX_W = 0.6f;       // rad/s
-const float AUTO_I_ZONE_MM = 40.0f;    // chỉ tích phân khi sai số nhỏ hơn mức này (chống tích luỹ quá đà)
-const float AUTO_VMAX_MMS = 1000.0f;   // trần tốc độ tịnh tiến khi bám path
-const float FF_LEAD_S = 0.08f;         // bù trễ motor: lấy vận tốc feedforward sớm hơn 80 ms
-const float AUTO_WMAX = 5.0f;          // rad/s
+const float AUTO_I_MAX_W = 0.6f;
+const float AUTO_I_ZONE_MM = 40.0f;
+const float AUTO_VMAX_MMS = 1000.0f;
+const float FF_LEAD_S = 0.08f;      // bù trễ motor
+const float AUTO_WMAX = 5.0f;
 
-// Đồng hồ co giãn: sai số > START thì bắt đầu chậm, >= FULL thì dừng hẳn đồng hồ
 const float SLOW_START_MM = 40.0f, SLOW_FULL_MM = 120.0f;
-
-// Kết thúc một đoạn có dừng
 const float END_TOL_MM = 12.0f, END_TOL_RAD = 2.0f * DEG_TO_RAD;
 const uint32_t END_TIMEOUT_MS = 1500;
-
-// Tiến tới điểm đầu đoạn (khi đang lệch, VD sau khi ép tường)
 const float APPROACH_TOL_MM = 25.0f, APPROACH_TOL_RAD = 4.0f * DEG_TO_RAD;
 const float APPROACH_VMAX_MMS = 350.0f;
 const uint32_t APPROACH_TIMEOUT_MS = 3000;
-
-// Ép tường
 const float WALL_SPEED_MMS = 180.0f;
 const uint32_t WALL_PUSH_MS = 300;
-// Lift
-const uint32_t LIFT_WAIT_TIMEOUT_MS = 10000;
-
+const uint32_t LIFT_WAIT_TIMEOUT_MS = 6000;
+const uint32_t SHOOTER_WAIT_TIMEOUT_MS = 4000;
 const bool AUTO_RESET_POSE_ON_START = true;   // bấm chạy tự động => đặt toạ độ = điểm xuất phát
 
 // ============================ TRẠNG THÁI =============================
 enum AutoPhase { AP_IDLE, AP_APPROACH, AP_FOLLOW, AP_SETTLE, AP_WAIT, AP_LIFT, AP_WALL_DRIVE, AP_WALL_PUSH,
-                 AP_CUSTOM, AP_DONE };
-const char *PHASE_NAME[] = {"idle", "approach", "follow", "settle", "wait", "lift", "wall", "push", "custom", "done"};
+                 AP_SHOOTER, AP_TIMER, AP_CUSTOM, AP_DONE };
+const char *PHASE_NAME[] = {"idle", "approach", "follow", "settle", "wait", "lift", "wall", "push",
+                            "shooter", "timer", "custom", "done"};
 
 AutoPhase autoPhase = AP_IDLE;
 int autoStep = 0;
-uint32_t phaseStartMs = 0, autoStartMs = 0;
+uint32_t phaseStartMs = 0, autoStartMs = 0, timerMs = 0;
 float trajIdx = 0;
 bool lastFollowContinue = false;
 int32_t lastFollowEnd = -1;
 float iX = 0, iY = 0, iTh = 0, prevEx = 0, prevEy = 0;
-// WALL
 float wallTargetTh = 0;
-// CUSTOM chạy song song (1 suất)
 int asyncCustomId = -1; float asyncCustomParam = 0;
 
 bool runCustomAction(int id, float param, bool start);
@@ -67,12 +74,12 @@ void beginStep();
 
 static char statusBuf[48];
 const char *autoStatus() {
-  if (mode != MODE_AUTO) return "";
+  if (robotMode != RM_AUTO) return "";
   snprintf(statusBuf, sizeof(statusBuf), "bước %d/%d %s idx=%.0f", autoStep, STEP_COUNT, PHASE_NAME[autoPhase], trajIdx);
   return statusBuf;
 }
 
-void setPhase(int p) { autoPhase = (AutoPhase)p; phaseStartMs = millis(); }   // int: tránh lỗi prototype của Arduino IDE
+void setPhase(int p) { autoPhase = (AutoPhase)p; phaseStartMs = millis(); }
 uint32_t phaseMs() { return millis() - phaseStartMs; }
 void resetPid() { iX = iY = iTh = 0; prevEx = prevEy = 0; }
 
@@ -84,17 +91,17 @@ float wallNormal(int wall) {
 float sideAngle(int side) {
   switch (side) { case 0: return 0; case 1: return HALF_PI; case 2: return PI; default: return -HALF_PI; }
 }
-// Đặt 1 toạ độ khi biết khoảng cách vuông góc từ tâm robot tới tường
 void setCoordFromWall(int wall, float perp) {
+  float x = poseX, y = poseY;
   switch (wall) {
-    case 0: poseX = perp; break;
-    case 1: poseX = FIELD_W_MM - perp; break;
-    case 2: poseY = perp; break;
-    default: poseY = FIELD_H_MM - perp; break;
+    case 0: x = perp; break;
+    case 1: x = FIELD_W_MM - perp; break;
+    case 2: y = perp; break;
+    default: y = FIELD_H_MM - perp; break;
   }
+  setPose(x, y, poseTh);
 }
 
-// Lấy điểm quỹ đạo tại chỉ số thực (nội suy)
 void trajAt(float fi, TrajPt &out) {
   int i0 = (int)floorf(fi);
   if (i0 < 0) i0 = 0;
@@ -106,7 +113,6 @@ void trajAt(float fi, TrajPt &out) {
   out.vx = A.vx + g * (B.vx - A.vx); out.vy = A.vy + g * (B.vy - A.vy); out.w = A.w + g * (B.w - A.w);
 }
 
-// PID vị trí + feedforward, xuất lệnh hệ sân
 void poseControl(float tx, float ty, float tth, float ffx, float ffy, float ffw, float dt, float vlimit) {
   float ex = tx - poseX, ey = ty - poseY, eth = wrapPi(tth - poseTh);
   if (AUTO_KI_XY > 0 && hypotf(ex, ey) < AUTO_I_ZONE_MM) {
@@ -128,8 +134,10 @@ void poseControl(float tx, float ty, float tth, float ffx, float ffy, float ffw,
 // ============================ ĐIỀU KHIỂN =============================
 void startAuto() {
   if (STEP_COUNT == 0) { Serial.println("[AUTO] path_data.h trống"); return; }
+  if (!poseFresh()) { Serial.println("[AUTO] Không bắt đầu: chưa có toạ độ từ Pico"); return; }
+  if (poseFlags & POSE_FLAG_CALIBRATING) { Serial.println("[AUTO] Không bắt đầu: Pico đang cân gyro, giữ yên xe"); return; }
   if (AUTO_RESET_POSE_ON_START) setPose(START_X_MM, START_Y_MM, START_TH_RAD);
-  mode = MODE_AUTO;
+  robotMode = RM_AUTO;
   autoStep = 0;
   lastFollowContinue = false; lastFollowEnd = -1;
   asyncCustomId = -1;
@@ -141,27 +149,26 @@ void startAuto() {
 }
 
 void stopAuto(const char *why) {
-  stopMotors();
-  mode = MODE_MANUAL;
+  stopDrive();
+  robotMode = RM_MANUAL;
   setPhase(AP_IDLE);
   asyncCustomId = -1;
+  liftSetTarget(liftPosMM);          // giữ nguyên chiều cao đang đứng
   setPadColor(0, 255, 0);
   Serial.printf("[AUTO] DỪNG: %s (%.1f s)\n", why, (millis() - autoStartMs) / 1000.0f);
 }
 
-void nextStep() {
-  autoStep++;
-  beginStep();
-}
+void nextStep() { autoStep++; beginStep(); }
 
 void beginStep() {
   if (autoStep >= STEP_COUNT) {
-    stopMotors();
+    stopDrive();
     setPhase(AP_DONE);
     Serial.printf("[AUTO] HOÀN THÀNH sau %.1f s\n", (millis() - autoStartMs) / 1000.0f);
     return;
   }
   const AutoStep &s = STEPS[autoStep];
+  const bool async = (s.flags & SF_ASYNC) != 0;
   switch (s.type) {
     case ST_FOLLOW: {
       bool contiguous = lastFollowContinue && s.a == lastFollowEnd;
@@ -180,27 +187,56 @@ void beginStep() {
     }
     case ST_LIFT:
       liftSetTarget(s.p1);
-      if (s.flags & SF_ASYNC) { nextStep(); return; }
+      if (async) { nextStep(); return; }
+      stopDrive();
       setPhase(AP_LIFT);
       break;
     case ST_WAIT:
-      stopMotors();
+      stopDrive();
       setPhase(AP_WAIT);
       break;
     case ST_WALL: {
       float raw = wallNormal(s.b) - sideAngle(s.a);
-      wallTargetTh = poseTh + wrapPi(raw - poseTh);    // góc mục tiêu gần góc hiện tại nhất
+      wallTargetTh = poseTh + wrapPi(raw - poseTh);
       setPhase(AP_WALL_DRIVE);
       break;
     }
+    case ST_INTAKE:
+      intakeCommand((int)lroundf(s.p1));
+      nextStep();
+      return;
+    case ST_SHOOTER:
+      if (s.p1 <= 0.5f) { shooterEnable(false); nextStep(); return; }
+      shooterSetRpm(s.p1);
+      shooterEnable(true);
+      if (async) { nextStep(); return; }
+      stopDrive();
+      setPhase(AP_SHOOTER);
+      break;
+    case ST_GRIP:
+      gripSet(s.p1 > 0.5f);
+      if (async) { nextStep(); return; }
+      stopDrive();
+      timerMs = GRIP_SETTLE_MS;
+      setPhase(AP_TIMER);
+      break;
+    case ST_GUIDE: {
+      uint32_t dur = (s.p2 > 0) ? (uint32_t)s.p2 : 0;
+      guideSet((int)lroundf(s.p1), dur);
+      if (async || dur == 0) { nextStep(); return; }
+      stopDrive();
+      timerMs = dur;
+      setPhase(AP_TIMER);
+      break;
+    }
     case ST_CUSTOM:
-      if (s.flags & SF_ASYNC) {
+      if (async) {
         asyncCustomId = s.a; asyncCustomParam = s.p1;
         if (runCustomAction(s.a, s.p1, true)) asyncCustomId = -1;
         nextStep();
         return;
       }
-      stopMotors();
+      stopDrive();
       setPhase(AP_CUSTOM);
       if (runCustomAction(s.a, s.p1, true)) { nextStep(); return; }
       break;
@@ -211,13 +247,14 @@ void beginStep() {
 }
 
 void autoUpdate(float dt) {
-  // Huỷ: O / PS, hoặc người lái gạt mạnh cần
-  if (padNow.ok && (PRESSED(b) || PRESSED(ps))) { stopAuto("huỷ bằng tay cầm"); return; }
+  // Huỷ: PS / Share, hoặc người lái gạt mạnh cần
+  if (padNow.ok && (PRESSED(ps) || PRESSED(share))) { stopAuto("huỷ bằng tay cầm"); return; }
   if (padNow.ok && (fabsf(padNow.lx) > 0.7f || fabsf(padNow.ly) > 0.7f || fabsf(padNow.rx) > 0.7f)) {
     stopAuto("người lái gạt cần"); return;
   }
+  if (!poseFresh()) { stopAuto("mất toạ độ từ Pico"); return; }
   if (asyncCustomId >= 0 && runCustomAction(asyncCustomId, asyncCustomParam, false)) asyncCustomId = -1;
-  if (autoPhase == AP_DONE) { stopMotors(); stopAuto("xong path"); return; }
+  if (autoPhase == AP_DONE) { stopAuto("xong path"); return; }
 
   const AutoStep &s = STEPS[autoStep];
   switch (autoPhase) {
@@ -254,22 +291,29 @@ void autoUpdate(float dt) {
       const TrajPt &p = TRAJ[s.b];
       poseControl(p.x, p.y, p.th, 0, 0, 0, dt, APPROACH_VMAX_MMS);
       bool ok = hypotf(p.x - poseX, p.y - poseY) < END_TOL_MM && fabsf(wrapPi(p.th - poseTh)) < END_TOL_RAD;
-      if (ok || phaseMs() > END_TIMEOUT_MS) { stopMotors(); resetPid(); nextStep(); }
+      if (ok || phaseMs() > END_TIMEOUT_MS) { stopDrive(); resetPid(); nextStep(); }
       break;
     }
     case AP_WAIT:
-      stopMotors();
+      stopDrive();
       if (phaseMs() >= (uint32_t)s.p1) nextStep();
       break;
     case AP_LIFT:
-      stopMotors();
+      stopDrive();
       if (!liftBusy() || phaseMs() > LIFT_WAIT_TIMEOUT_MS) nextStep();
+      break;
+    case AP_SHOOTER:
+      stopDrive();
+      if (shooterAtSpeed || shooterFault || phaseMs() > SHOOTER_WAIT_TIMEOUT_MS) nextStep();
+      break;
+    case AP_TIMER:
+      stopDrive();
+      if (phaseMs() >= timerMs) nextStep();
       break;
     case AP_WALL_DRIVE: {
       int side = s.a, n = touchCount(side), hit = touchPressed(side);
       float dir = sideAngle(side);
       float sp = hit ? 0.6f * WALL_SPEED_MMS : WALL_SPEED_MMS;
-      // chưa chạm: giữ hướng; đã chạm 1 bên: thả hướng cho xe tự xoay áp sát tường
       float w = hit ? 0 : clampf(AUTO_KP_TH * wrapPi(wallTargetTh - poseTh), -2.0f, 2.0f);
       driveRobot(sp * cosf(dir), sp * sinf(dir), w);
       bool done = (n > 0 && hit >= n);
@@ -277,7 +321,7 @@ void autoUpdate(float dt) {
       if (done || (n == 0 && phaseMs() > timeout)) setPhase(AP_WALL_PUSH);   // không có công tắc: ép theo thời gian
       else if (phaseMs() > timeout) {
         if (hit) setPhase(AP_WALL_PUSH);
-        else { stopMotors(); Serial.println("[AUTO] Ép tường: không chạm, bỏ qua sửa vị trí"); nextStep(); }
+        else { stopDrive(); Serial.println("[AUTO] Ép tường: không chạm, bỏ qua sửa vị trí"); nextStep(); }
       }
       break;
     }
@@ -285,7 +329,7 @@ void autoUpdate(float dt) {
       float dir = sideAngle(s.a);
       driveRobot(0.5f * WALL_SPEED_MMS * cosf(dir), 0.5f * WALL_SPEED_MMS * sinf(dir), 0);
       if (phaseMs() >= WALL_PUSH_MS) {
-        stopMotors();
+        stopDrive();
         float dist = (s.a == 0 || s.a == 2) ? ROBOT_LEN_MM / 2 : ROBOT_WID_MM / 2;
         float oldX = poseX, oldY = poseY, oldTh = poseTh;
         setPose(poseX, poseY, wallTargetTh);
@@ -298,11 +342,11 @@ void autoUpdate(float dt) {
       break;
     }
     case AP_CUSTOM:
-      stopMotors();
+      stopDrive();
       if (runCustomAction(s.a, s.p1, false)) nextStep();
       break;
     default:
-      stopMotors();
+      stopDrive();
       break;
   }
 }
@@ -310,19 +354,19 @@ void autoUpdate(float dt) {
 // =====================================================================
 // ===================== HÀNH ĐỘNG RIÊNG (TỰ VIẾT) =====================
 // =====================================================================
-// Gọi với start = true một lần khi bắt đầu, sau đó start = false mỗi chu kỳ (5 ms).
+// Gọi với start = true một lần khi bắt đầu, sau đó start = false mỗi chu kỳ (10 ms).
 // Trả về true khi xong. KHÔNG dùng delay() ở đây.
 // id và tham số đặt trong app (hành động "★ Hành động riêng").
 bool runCustomAction(int id, float param, bool start) {
   static uint32_t t0 = 0;
   if (start) t0 = millis();
   switch (id) {
-    case 1:   // Ví dụ: chờ param ms (thay bằng: bật motor kẹp, bắn, nhả vật…)
+    case 1:   // Ví dụ: chờ param ms
       return millis() - t0 >= (uint32_t)param;
 
-    case 2:   // Ví dụ: nâng/hạ lift thêm param mm so với hiện tại, xong khi lift dừng
-      if (start) liftSetTarget(liftTargetMM + param);
-      return !liftBusy();
+    case 2:   // Ví dụ: bắn 1 quả: dẫn bóng chạy 400 ms rồi dừng (param = tốc độ %, mặc định 100)
+      if (start) guideSet(param != 0 ? (int)param : 100, 400);
+      return millis() - t0 >= 450;
 
     default:
       Serial.printf("[AUTO] Hành động riêng id=%d chưa được viết\n", id);
