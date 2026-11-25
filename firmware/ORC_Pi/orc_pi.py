@@ -656,6 +656,12 @@ class Robot:
         dts = now - self.t_flow
         self.t_flow = now
         if self.calibrating:
+            # đang cân gyro: chưa tính toạ độ, nhưng vẫn đếm chuột thô để kiểm tra chuột độc lập với IMU
+            cx, cy = self.mouse.read_acc()
+            sx, sy = (cy - self.last_mouse[1], cx - self.last_mouse[0]) if FLOW_SWAP_XY else (cx - self.last_mouse[0], cy - self.last_mouse[1])
+            self.raw_x += int(sx * FLOW_SIGN_X)
+            self.raw_y += int(sy * FLOW_SIGN_Y)
+            self.last_mouse = (cx, cy)
             return
         cx, cy = self.mouse.read_acc()
         dx, dy = cx - self.last_mouse[0], cy - self.last_mouse[1]
