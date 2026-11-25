@@ -1,11 +1,13 @@
-# Tự chạy khi bật Pi:  sudo cp orc-pi.service /etc/systemd/system/ && sudo systemctl enable --now orc-pi
-# (sửa đường dẫn ExecStart cho đúng nơi để orc_pi.py; xem log: journalctl -u orc-pi -f)
+# Tự chạy khi bật Pi:  sudo cp orc-pi.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now orc-pi
+# Đường dẫn dưới đây dành cho user "rpi" (repo ở /home/rpi/ORC_RUNNER). User khác thì sửa ExecStart/WorkingDirectory.
+# Xem log: journalctl -u orc-pi -f      Dừng để chạy tay/đo thử: sudo systemctl stop orc-pi
 [Unit]
-Description=ORC robot pose (BMI160 + optical flow) -> ESP32 qua UART
+Description=ORC robot pose (IMU + optical flow) -> ESP32 qua UART
 After=multi-user.target
 
 [Service]
-ExecStart=/usr/bin/python3 -u /home/pi/ORC_RUNNER/firmware/ORC_Pi/orc_pi.py
+WorkingDirectory=/home/rpi/ORC_RUNNER/firmware/ORC_Pi
+ExecStart=/usr/bin/python3 -u /home/rpi/ORC_RUNNER/firmware/ORC_Pi/orc_pi.py
 Restart=always
 RestartSec=2
 
