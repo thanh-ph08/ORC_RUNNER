@@ -24,7 +24,14 @@ const int  PWM_BITS = 10;
 const int  PWM_MAX  = 1023;
 
 // =====================================================================
-// ===== I2C (ESP32#1 là master): RPi, ESP32#2, hub Ohstem cùng 1 bus =====
+// ===== UART tới Raspberry Pi (toạ độ x, y, yaw). Nối chéo: Pi TXD (GPIO14) -> RX, Pi RXD (GPIO15) <- TX, GND chung =====
+// GPIO34 chỉ nhận vào nên dùng làm RX; đừng dùng GPIO1/3 (UART0, dính cổng USB nạp code).
+// =====================================================================
+const int      RPI_RX_PIN = 34, RPI_TX_PIN = 23;
+const uint32_t RPI_BAUD   = 921600;
+
+// =====================================================================
+// ===== I2C (ESP32#1 là master): ESP32#2 (encoder) và hub Ohstem (servo) cùng 1 bus =====
 // Cần trở kéo lên 3.3V (2.2k–4.7k) trên SDA/SCL. Nếu hay lỗi đọc, hạ I2C_CLOCK xuống 100000.
 // =====================================================================
 const int      I2C_SDA = 21, I2C_SCL = 22;

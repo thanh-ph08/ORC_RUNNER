@@ -1,10 +1,10 @@
 /*
- * orc_protocol.h — giao thức I2C giữa 3 board. FILE NÀY GIỐNG HỆT NHAU ở 2 thư mục
+ * orc_protocol.h — giao thức giữa 3 board (I2C + UART). FILE NÀY GIỐNG HỆT NHAU ở 2 thư mục
  * (ORC_Robot, ORC_Encoder). Bản Python của Pi (ORC_Pi/orc_pi.py) tự khai báo lại cùng giao thức; sửa ở đây thì sửa cả ở đó.
  *
  *   ESP32#1 (ORC_Robot)   = I2C MASTER, đọc mọi thứ, điều khiển motor
  *   ESP32#2 (ORC_Encoder) = I2C slave 0x42, đọc 2 encoder (bắn banh + nâng hạ)
- *   RPi     (ORC_Pi)      = I2C slave 0x43, BMI160 + chuột optical flow => toạ độ x, y, yaw
+ *   RPi     (ORC_Pi)      = nối bằng UART 921600 baud (không còn I2C), BMI160 + chuột optical flow => toạ độ x, y, yaw
  *   Hub Ohstem driverV2   = I2C slave 0x54, chỉ dùng cho servo (thư viện OhStemRobotics)
  *
  * Mọi số nhiều byte là little-endian (ESP32 và RP2040 đều little-endian nên chép thẳng struct).
@@ -14,14 +14,23 @@
 
 #define ORC_ADDR_OHSTEM_HUB 0x54
 #define ORC_ADDR_ENCODER    0x42
-#define ORC_ADDR_FLOW       0x43
+#define ORC_ADDR_FLOW       0x43   // (không dùng nữa — Pi nói chuyện qua UART)
+
+// ---- UART giữa ESP32#1 và Raspberry Pi ----
+//  Pi -> ESP32 : 0xAA 0x55 + PosePacket (40 byte, có CRC bên trong)      ~200 gói/giây
+//  ESP32 -> Pi : 0xA5 0x5A + len + payload[len] + crc8(payload)           payload = lệnh FLOW_CMD_*
+#define ORC_UART_BAUD     921600
+#define ORC_POSE_SYNC0    0xAA
+#define ORC_POSE_SYNC1    0x55
+#define ORC_CMD_SYNC0     0xA5
+#define ORC_CMD_SYNC1     0x5A
 
 // ---- ESP32#2: master ghi 1 byte lệnh ----
 #define ENC_CMD_RESET_SHOOTER 1
 #define ENC_CMD_RESET_LIFT    2
 #define ENC_CMD_RESET_ALL     3
 
-// ---- RPi: master ghi byte lệnh đầu tiên ----
+// ---- RPi: lệnh gửi từ ESP32#1 (byte đầu tiên của payload) ----
 #define FLOW_CMD_SET_POSE   0x10   // + float x_mm, float y_mm, float yaw_rad  (đặt toạ độ)
 #define FLOW_CMD_CAL_GYRO   0x11   // đo lại độ lệch gyro (xe phải đứng yên ~1.5 s)
 #define FLOW_CMD_CLEAR_RAW  0x12   // xoá bộ đếm thô (rawX, rawY, gyroDeg) để hiệu chỉnh

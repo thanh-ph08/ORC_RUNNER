@@ -5,7 +5,7 @@
  *   config.h     chân + hằng số hiệu chỉnh (chỉ sửa chỗ này)
  *   Motors.h     L298N × 4 (PWM trên IN1/IN2)
  *   Drive.h      4 bánh mecanum
- *   Odometry.h   toạ độ x, y, yaw từ RPi (chuột optical flow + BMI160)
+ *   Odometry.h   toạ độ x, y, yaw từ RPi (UART)
  *   Encoders.h   encoder từ ESP32#2
  *   Intake.h     hút bóng
  *   Shooter.h    bắn banh, PID tốc độ
@@ -69,14 +69,14 @@ static void telemetry() {
   static uint32_t last = 0;
   if (!telemetryOn || millis() - last < 250) return;
   last = millis();
-  Serial.printf("x=%6.0f y=%6.0f th=%6.1f° | shoot %s %4.0f/%4.0f rpm%s | lift %5.1f→%5.1f mm%s | gắp:%s dẫn:%d | I2C lỗi pose=%lu enc=%lu | %s %s\n",
+  Serial.printf("x=%6.0f y=%6.0f th=%6.1f° | shoot %s %4.0f/%4.0f rpm%s | lift %5.1f→%5.1f mm%s | gắp:%s dẫn:%d | lỗi gói Pi=%lu, I2C enc=%lu | %s %s\n",
                 poseX, poseY, poseTh * RAD_TO_DEG,
                 shooterOn ? "ON " : "off", shooterRpm, shooterTargetRpm, shooterFault ? " LỖI" : "",
                 liftPosMM, liftTargetMM, liftFault ? " LỖI" : "",
                 gripClosed ? "đóng" : "mở", guideSpeedPct,
                 (unsigned long)poseErrCount, (unsigned long)encErrCount,
                 robotMode == RM_AUTO ? "AUTO" : "MAN", autoStatus());
-  if (!poseFresh()) Serial.println("  ! mất RPi (toạ độ)");
+  if (!poseFresh()) Serial.println("  ! mất Raspberry Pi (toạ độ) — kiểm tra dây TX/RX và orc_pi.py");
   if (!encFresh()) Serial.println("  ! mất ESP32#2 (encoder)");
 }
 
@@ -88,6 +88,7 @@ void setup() {
   motorsBegin();
   Wire.begin(I2C_SDA, I2C_SCL, I2C_CLOCK);
   Wire.setTimeOut(15);                      // ms — slave treo thì không kẹt cả vòng điều khiển
+  odometryBegin();                          // UART2 tới Raspberry Pi
   servosBegin();                            // hub.begin() gọi lại Wire.begin(), nên đặt lại clock sau đó
   Wire.setClock(I2C_CLOCK);
   touchBegin();

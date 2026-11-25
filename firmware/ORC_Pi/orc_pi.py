@@ -1,28 +1,26 @@
 #!/usr/bin/env python3
 """
-orc_pi.py — Raspberry Pi 3B+ : I2C SLAVE 0x43 nói chuyện với ESP32#1 (giao thức xem orc_protocol.h).
+orc_pi.py — Raspberry Pi 3B+ : đọc cảm biến, tính toạ độ, gửi cho ESP32#1 qua UART.
 
 Việc của Pi:
   1. Đọc BMI160 (I2C bus 1, GPIO2/3) -> bộ lọc Mahony (gyro + gia tốc) -> góc YAW
   2. Đọc chuột USB (optical flow) bằng evdev -> dịch chuyển (count)
   3. Ghép: dùng yaw để (a) xoay dịch chuyển từ hệ xe sang hệ sân, (b) trừ phần chuyển động giả khi xe XOAY mà chuột
      không gắn đúng tâm quay (FLOW_POS_X/Y_MM) => toạ độ x, y, yaw (hệ sân)
-  4. Phát PosePacket cho ESP32#1 qua I2C slave (BSC của BCM2837, điều khiển bằng pigpio)
+  4. Đẩy PosePacket cho ESP32#1 qua UART khoảng 200 lần/giây, và nhận lệnh (đặt toạ độ, đo lại gyro) từ ESP32#1
 
-====== Cài đặt (Raspberry Pi OS) ======
-  sudo apt install -y pigpio python3-pigpio python3-smbus2 python3-evdev      (hoặc pip install pigpio smbus2 evdev)
-  sudo raspi-config  -> Interface Options -> I2C = Enable
-  Thêm vào /boot/firmware/config.txt (hoặc /boot/config.txt):   dtparam=i2c_arm=on,i2c_arm_baudrate=400000
-  sudo systemctl enable --now pigpiod
-  sudo python3 orc_pi.py            (cần root để đọc /dev/input và dùng BSC)
+====== Đấu dây (số theo GPIO/BCM) ======
+  UART tới ESP32#1:  Pi TXD GPIO14 (chân 8)  -> ESP32 GPIO34
+                     Pi RXD GPIO15 (chân 10) <- ESP32 GPIO23          GND chung. Logic 3.3V cả hai phía.
+  BMI160 (I2C1):     SDA GPIO2 (chân 3), SCL GPIO3 (chân 5), 3V3, GND. Nằm PHẲNG, trục Z hướng LÊN.
+                     SDO nối GND => 0x68, nối 3V3 => 0x69.
+  Chuột:             cắm cổng USB của Pi (chuột optical, 800–1600 CPI, cách mặt sân 1–3 mm).
 
-====== Đấu dây (đánh số theo GPIO/BCM) ======
-  I2C slave (nối ESP32#1):  SDA = GPIO18 (chân 12), SCL = GPIO19 (chân 35), GND chung.
-        Đây là cặp chân BSC cố định của Pi 3; bus chung với ESP32#2 + hub Ohstem, trở kéo lên 3.3V nằm ngoài (2.2k–4.7k).
-        Logic 3.3V cả hai phía, không cần dịch mức.
-  BMI160 (I2C1):  SDA = GPIO2 (chân 3), SCL = GPIO3 (chân 5), 3V3, GND. Nằm PHẲNG, trục Z hướng LÊN.
-        SDO nối GND => 0x68, nối 3V3 => 0x69.
-  Chuột: cắm vào cổng USB của Pi. Dùng chuột optical (không phải laser), 800–1600 CPI, gắn cách mặt sân 1–3 mm.
+====== Cài đặt (xem README, mục "Cài Raspberry Pi") ======
+  sudo apt install -y python3-serial python3-evdev i2c-tools python3-pip
+  sudo pip3 install smbus2 --break-system-packages
+  raspi-config: bật I2C, bật Serial Port phần cứng (TẮT login shell qua serial); config.txt: dtoverlay=disable-bt
+  sudo python3 orc_pi.py        (cần root để đọc chuột)
 
 Gõ Ctrl+C để thoát. Mỗi 0,5 s in toạ độ ra màn hình.
 """
@@ -33,7 +31,7 @@ import sys
 import threading
 import time
 
-import pigpio
+import serial
 from smbus2 import SMBus
 import evdev
 from evdev import ecodes
@@ -41,7 +39,8 @@ from evdev import ecodes
 # =====================================================================
 # ============================ CẤU HÌNH ===============================
 # =====================================================================
-I2C_SLAVE_ADDR = 0x43
+SERIAL_PORT = "/dev/serial0"
+SERIAL_BAUD = 921600
 IMU_BUS = 1
 BMI160_ADDR = 0x69                 # 0x68 nếu SDO nối GND
 
@@ -62,9 +61,11 @@ CAL_S = 1.5                        # thời gian đo độ lệch gyro lúc bậ
 
 IMU_PERIOD = 0.002                 # 500 Hz (Python thực tế có thể thấp hơn, dt được đo thật)
 FLOW_PERIOD = 0.005
-PKT_PERIOD = 0.004
+PKT_PERIOD = 0.005
 
 # ---- Giao thức (khớp orc_protocol.h) ----
+POSE_SYNC = b"\xAA\x55"           # Pi -> ESP32 : sync + PosePacket(40 byte)
+CMD_SYNC = (0xA5, 0x5A)           # ESP32 -> Pi : sync + len + payload + crc8(payload)
 FLOW_CMD_SET_POSE = 0x10
 FLOW_CMD_CAL_GYRO = 0x11
 FLOW_CMD_CLEAR_RAW = 0x12
@@ -374,17 +375,52 @@ class Robot:
         return body + bytes([crc8(body)])
 
 
+class CmdParser:
+    """Tách khung lệnh từ ESP32#1: A5 5A len payload crc8(payload)"""
+
+    def __init__(self):
+        self.buf = bytearray()
+
+    def feed(self, data: bytes):
+        self.buf += data
+        out = []
+        while True:
+            i = self.buf.find(bytes(CMD_SYNC))
+            if i < 0:
+                del self.buf[:max(0, len(self.buf) - 1)]      # giữ lại 1 byte phòng khi sync bị cắt đôi
+                break
+            if i > 0:
+                del self.buf[:i]
+            if len(self.buf) < 3:
+                break
+            n = self.buf[2]
+            if n == 0 or n > 32:                               # độ dài vô lý => sync giả
+                del self.buf[:2]
+                continue
+            if len(self.buf) < 3 + n + 1:
+                break
+            payload = bytes(self.buf[3:3 + n])
+            if crc8(payload) == self.buf[3 + n]:
+                out.append(payload)
+                del self.buf[:3 + n + 1]
+            else:
+                del self.buf[:2]
+        return out
+
+
 def main():
-    pi = pigpio.pi()
-    if not pi.connected:
-        sys.exit("Không nối được pigpiod: chạy  sudo systemctl enable --now pigpiod")
+    try:
+        ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=0, write_timeout=0.05)
+    except serial.SerialException as e:
+        sys.exit(f"Không mở được {SERIAL_PORT}: {e}\nKiểm tra: raspi-config bật Serial Port phần cứng, tắt login shell, dtoverlay=disable-bt")
+    parser = CmdParser()
     try:                                   # ưu tiên thời gian thực cho vòng lặp
         os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(20))
     except (PermissionError, AttributeError, OSError):
         pass
 
     bot = Robot()
-    print("ORC_Pi sẵn sàng, I2C slave 0x%02X. Giữ yên xe ~%.1f s để đo bias gyro." % (I2C_SLAVE_ADDR, CAL_S))
+    print("ORC_Pi sẵn sàng, UART %s %d baud. Giữ yên xe ~%.1f s để đo bias gyro." % (SERIAL_PORT, SERIAL_BAUD, CAL_S))
     pkt = bot.packet()
     last_print = 0.0
     try:
@@ -397,10 +433,14 @@ def main():
             if now - bot.t_pkt >= PKT_PERIOD:
                 bot.t_pkt = now
                 pkt = bot.packet()
-                # Nạp gói mới vào FIFO phát và nhận luôn các byte lệnh ESP32#1 vừa ghi
-                _status, n, rx = pi.bsc_i2c(I2C_SLAVE_ADDR, pkt)
-                if n:
-                    bot.handle_rx(bytes(rx))
+                try:
+                    ser.write(POSE_SYNC + pkt)
+                except serial.SerialTimeoutException:
+                    pass                           # ESP32 chưa đọc kịp, bỏ gói này
+            data = ser.read(256)
+            if data:
+                for payload in parser.feed(data):
+                    bot.handle_rx(payload)
             t = time.monotonic()
             if t - last_print > 0.5:
                 last_print = t
@@ -410,8 +450,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        pi.bsc_i2c(0)                      # tắt BSC
-        pi.stop()
+        ser.close()
 
 
 if __name__ == "__main__":

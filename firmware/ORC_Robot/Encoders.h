@@ -6,12 +6,22 @@
 #include "config.h"
 #include "orc_protocol.h"
 #include "Common.h"
-#include "Odometry.h"   // i2cReadPacket
 
 int32_t encShooterCount = 0, encLiftCount = 0;   // count thô (tích luỹ từ lúc ESP32#2 bật)
 int32_t encShooterCps = 0, encLiftCps = 0;       // count/giây
 uint32_t encLastOkMs = 0, encErrCount = 0;
 bool encEverOk = false;
+
+// Đọc 1 gói từ slave. true nếu đủ byte.
+static bool i2cReadPacket(uint8_t addr, uint8_t *buf, size_t len) {
+  size_t n = Wire.requestFrom((uint16_t)addr, (size_t)len, true);
+  if (n != len) {
+    while (Wire.available()) Wire.read();
+    return false;
+  }
+  for (size_t i = 0; i < len; i++) buf[i] = Wire.read();
+  return true;
+}
 
 bool encFresh() { return encEverOk && (millis() - encLastOkMs) < SENSOR_STALE_MS; }
 
