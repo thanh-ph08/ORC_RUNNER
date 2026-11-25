@@ -3,7 +3,7 @@
 orc_pi.py — Raspberry Pi 3B+ : đọc cảm biến, tính toạ độ, gửi cho ESP32#1 qua UART.
 
 Việc của Pi:
-  1. Đọc BMI160 (I2C bus 1, GPIO2/3) -> bộ lọc Mahony (gyro + gia tốc) -> góc YAW
+  1. Đọc BMI160 (I2C bus 3 phần mềm, GPIO5/6) -> bộ lọc Mahony (gyro + gia tốc) -> góc YAW
   2. Đọc chuột USB (optical flow) bằng evdev -> dịch chuyển (count)
   3. Ghép: dùng yaw để (a) xoay dịch chuyển từ hệ xe sang hệ sân, (b) trừ phần chuyển động giả khi xe XOAY mà chuột
      không gắn đúng tâm quay (FLOW_POS_X/Y_MM) => toạ độ x, y, yaw (hệ sân)
@@ -12,7 +12,7 @@ Việc của Pi:
 ====== Đấu dây (số theo GPIO/BCM) ======
   UART tới ESP32#1:  Pi TXD GPIO14 (chân 8)  -> ESP32 GPIO34
                      Pi RXD GPIO15 (chân 10) <- ESP32 GPIO23          GND chung. Logic 3.3V cả hai phía.
-  BMI160 (I2C1):     SDA GPIO2 (chân 3), SCL GPIO3 (chân 5), 3V3, GND. Nằm PHẲNG, trục Z hướng LÊN.
+  BMI160 (I2C bus 3): SDA GPIO5 (chân 29), SCL GPIO6 (chân 31), 3V3, GND. Nằm PHẲNG, trục Z hướng LÊN.
                      SDO nối GND => 0x68, nối 3V3 => 0x69.
   Chuột:             cắm cổng USB của Pi (chuột optical, 800–1600 CPI, cách mặt sân 1–3 mm).
 
@@ -41,7 +41,7 @@ from evdev import ecodes
 # =====================================================================
 SERIAL_PORT = "/dev/serial0"
 SERIAL_BAUD = 921600
-IMU_BUS = 1
+IMU_BUS = 3                         # bus I2C phần mềm riêng GPIO5/6 (dtoverlay=i2c-gpio,bus=3,...), tách khỏi ESP32
 BMI160_ADDR = 0x69                 # 0x68 nếu SDO nối GND
 
 # ---- Chuột optical flow ----
@@ -57,7 +57,12 @@ GYRO_SIGN = 1                      # quay xe NGƯỢC chiều kim đồng hồ (
 GYRO_SCALE = 1.000                 # HIỆU CHỈNH: quay xe đúng 10 vòng, đọc gyroDeg ('g'), lấy 3600 / số độ
 MAHONY_KP = 1.5                    # độ tin gia tốc kế (chỉ sửa nghiêng); 0.5–5
 ACCEL_G_MIN, ACCEL_G_MAX = 0.85, 1.15   # chỉ tin gia tốc khi |a| ≈ 1 g
-CAL_S = 1.5                        # thời gian đo độ lệch gyro lúc bật / khi có lệnh
+CAL_S = 2.0                        # thời gian đo độ lệch gyro lúc bật / khi có lệnh (sau 0.4 s bỏ qua đầu)
+CAL_SKIP_S = 0.4                   # bỏ qua đoạn đầu khi vừa reset cảm biến / vừa chạm tay vào xe
+CAL_MOTION_DPS = 0.35              # 2 nửa thời gian đo lệch nhau quá mức này => xe bị động đậy, đo lại
+GYRO_SPIKE_DPS = 300.0             # mẫu gyro nhảy quá mức này so với mẫu trước (2 ms) => coi là nhiễu bus, loại
+BIAS_FAST_S = 8.0                  # trong khoảng này sau khi đo xong, học lại bias nhanh hơn
+BIAS_TAU_FAST_S, BIAS_TAU_S = 1.5, 8.0
 
 IMU_PERIOD = 0.002                 # 500 Hz (Python thực tế có thể thấp hơn, dt được đo thật)
 FLOW_PERIOD = 0.005
@@ -100,6 +105,10 @@ class Bmi160:
     def __init__(self, bus_no=IMU_BUS, addr=BMI160_ADDR):
         self.bus = SMBus(bus_no)
         self.addr = addr
+        self.err = 0            # số lần đọc I2C lỗi (OSError)
+        self.glitch = 0         # số mẫu bị loại vì giá trị vô lý (nhiễu bus I2C)
+        self.last = None        # mẫu gyro hợp lệ gần nhất
+        self.rej_run = 0        # số mẫu liên tiếp bị loại
 
     def begin(self) -> bool:
         try:
@@ -126,9 +135,22 @@ class Bmi160:
         try:
             b = self.bus.read_i2c_block_data(self.addr, 0x0C, 12)
         except OSError:
+            self.err += 1
             return None
         v = struct.unpack("<6h", bytes(b))
-        return (v[0] / 32.8, v[1] / 32.8, v[2] / 32.8, v[3] / 8192.0, v[4] / 8192.0, v[5] / 8192.0)
+        s = (v[0] / 32.8, v[1] / 32.8, v[2] / 32.8, v[3] / 8192.0, v[4] / 8192.0, v[5] / 8192.0)
+        # Loại mẫu hỏng do nhiễu/va chạm trên bus I2C: tràn thang đo, toàn 0, hoặc nhảy vọt không thể có
+        bad = any(x in (-32768, 32767) for x in v) or not any(v) \
+            or abs(s[3]) > 4.5 or abs(s[4]) > 4.5 or abs(s[5]) > 4.5
+        if not bad and self.last is not None:
+            bad = max(abs(s[i] - self.last[i]) for i in range(3)) > GYRO_SPIKE_DPS
+        if bad and self.rej_run < 3:           # 3 mẫu hỏng liên tiếp => coi là chuyển động thật, chấp nhận lại
+            self.rej_run += 1
+            self.glitch += 1
+            return None
+        self.rej_run = 0
+        self.last = s
+        return s
 
 
 # =====================================================================
@@ -261,6 +283,11 @@ class Robot:
         self.cal_start = time.monotonic()
         self.cal_sum = [0.0, 0.0, 0.0]
         self.cal_n = 0
+        self.cal_a = [0.0, 0.0, 0.0]      # tổng nửa đầu thời gian đo
+        self.cal_na = 0
+        self.cal_b = [0.0, 0.0, 0.0]      # tổng nửa sau
+        self.cal_nb = 0
+        self.cal_done_t = 0.0
         self.last_mouse = (0, 0)
         self.flow_last_yaw = 0.0
         self.last_motion = 0.0
@@ -296,6 +323,10 @@ class Robot:
         self.cal_start = time.monotonic()
         self.cal_sum = [0.0, 0.0, 0.0]
         self.cal_n = 0
+        self.cal_a = [0.0, 0.0, 0.0]
+        self.cal_na = 0
+        self.cal_b = [0.0, 0.0, 0.0]
+        self.cal_nb = 0
         print("[IMU] Đo bias gyro, GIỮ YÊN XE")
 
     # ---- IMU ----
@@ -308,23 +339,43 @@ class Robot:
         if s is None:
             return
         gx, gy, gz, ax, ay, az = s
+        mono = time.monotonic()
         if self.calibrating:
-            self.cal_sum[0] += gx; self.cal_sum[1] += gy; self.cal_sum[2] += gz; self.cal_n += 1
             self.ahrs.update(0, 0, 0, ax, ay, az, dt, 8.0, True)       # gom tư thế nghiêng nhanh khi đứng yên
-            if time.monotonic() - self.cal_start >= CAL_S and self.cal_n > 50:
-                self.bias = [v / self.cal_n for v in self.cal_sum]
+            el = mono - self.cal_start - CAL_SKIP_S
+            if el >= 0:
+                tgt, n = (self.cal_a, 'a') if el < CAL_S / 2 else (self.cal_b, 'b')
+                tgt[0] += gx; tgt[1] += gy; tgt[2] += gz
+                if n == 'a':
+                    self.cal_na += 1
+                else:
+                    self.cal_nb += 1
+            if el >= CAL_S and self.cal_na > 20 and self.cal_nb > 20:
+                ma = [v / self.cal_na for v in self.cal_a]
+                mb = [v / self.cal_nb for v in self.cal_b]
+                if max(abs(ma[i] - mb[i]) for i in range(3)) > CAL_MOTION_DPS:
+                    print("[IMU] Xe bị động đậy lúc đo bias, đo lại — giữ yên xe")
+                    self.start_calibration()
+                    return
+                n = self.cal_na + self.cal_nb
+                self.bias = [(self.cal_a[i] + self.cal_b[i]) / n for i in range(3)]
+                self.cal_n = n
                 self.calibrating = False
+                self.cal_done_t = mono
                 self.last_mouse = self.mouse.read_acc()
                 self.flow_last_yaw = self.ahrs.yaw()
-                print(f"[IMU] bias = {self.bias[0]:.3f} {self.bias[1]:.3f} {self.bias[2]:.3f} dps ({self.cal_n} mẫu)")
+                print(f"[IMU] bias = {self.bias[0]:.3f} {self.bias[1]:.3f} {self.bias[2]:.3f} dps ({n} mẫu)")
             return
         rx = (gx - self.bias[0]) * GYRO_SIGN * GYRO_SCALE
         ry = (gy - self.bias[1]) * GYRO_SIGN * GYRO_SCALE
         rz = (gz - self.bias[2]) * GYRO_SIGN * GYRO_SCALE
-        # xe đứng yên => từ từ học lại bias để giảm trôi
-        if abs(rx) < 1.5 and abs(ry) < 1.5 and abs(rz) < 1.5 and time.monotonic() - self.last_motion > 0.3:
+        # xe đứng yên => học lại bias (nhanh trong vài giây đầu, sau đó chậm) để giảm trôi
+        fast = mono - self.cal_done_t < BIAS_FAST_S
+        lim = 2.5 if fast else 1.5
+        if abs(rx) < lim and abs(ry) < lim and abs(rz) < lim and mono - self.last_motion > 0.3:
+            a = dt / (BIAS_TAU_FAST_S if fast else BIAS_TAU_S)
             for i, g in enumerate((gx, gy, gz)):
-                self.bias[i] += 0.0005 * (g - self.bias[i])
+                self.bias[i] += a * (g - self.bias[i])
         an = math.sqrt(ax * ax + ay * ay + az * az)
         use_acc = ACCEL_G_MIN < an < ACCEL_G_MAX
         d2r = math.pi / 180.0
@@ -445,7 +496,8 @@ def main():
             if t - last_print > 0.5:
                 last_print = t
                 print(f"x={bot.x:7.1f} y={bot.y:7.1f} yaw={math.degrees(bot.yaw):7.2f}° | chuột:{'OK' if bot.mouse.connected else 'chưa cắm'} "
-                      f"raw=({bot.raw_x},{bot.raw_y}) | IMU:{'OK' if bot.imu_ok else 'LỖI'}{' (đang cân gyro)' if bot.calibrating else ''}")
+                      f"raw=({bot.raw_x},{bot.raw_y}) | IMU:{'OK' if bot.imu_ok else 'LỖI'}{' (đang cân gyro)' if bot.calibrating else ''}"
+                      f" nhiễu={bot.imu.glitch} lỗiI2C={bot.imu.err}")
             time.sleep(0.0005)
     except KeyboardInterrupt:
         pass
