@@ -513,6 +513,11 @@ class Robot:
                     self.cal_na += 1
                 else:
                     self.cal_nb += 1
+            if el >= CAL_S and (self.cal_na <= 20 or self.cal_nb <= 20):
+                # hết giờ mà chưa đủ mẫu (cảm biến lỗi/đứt giữa chừng) -> đo lại từ đầu, tránh kẹt "đang cân" mãi
+                print("[IMU] Chưa đủ mẫu để đo bias (cảm biến đọc lỗi?), đo lại — giữ yên xe")
+                self.start_calibration()
+                return
             if el >= CAL_S and self.cal_na > 20 and self.cal_nb > 20:
                 ma = [v / self.cal_na for v in self.cal_a]
                 mb = [v / self.cal_nb for v in self.cal_b]
