@@ -107,6 +107,8 @@ class Bmi160:
     NAME = "BMI160"
     GYRO_LSB = 32.8            # LSB/dps ở ±1000 dps
     ACC_LSB = 8192.0           # LSB/g ở ±4 g
+    CHECKS = ((0x41, 0x05), (0x43, 0x01))     # (thanh ghi, giá trị đã ghi): mất cấu hình = chip đã reset
+    CHECK_EVERY = 20           # kiểm tra cấu hình sau mỗi N mẫu tốt (~0.1 s)
 
     def __init__(self, bus_no=IMU_BUS, addr=BMI160_ADDR):
         if not os.path.exists(f"/dev/i2c-{bus_no}"):
@@ -122,6 +124,7 @@ class Bmi160:
         self.fail_run = 0       # số lần đọc liên tiếp lỗi / toàn 0 (chip chết, bus treo)
         self.resets = 0         # số lần chip phải khởi tạo lại
         self.last_recover = 0.0
+        self.n_ok = 0
 
     def begin(self) -> bool:
         try:
@@ -141,6 +144,16 @@ class Bmi160:
         w(0x42, 0x2B)                      # GYR_CONF 800 Hz
         w(0x43, 0x01)                      # ±1000 dps (32.8 LSB/dps)
         time.sleep(0.05)
+        return True
+
+    def config_ok(self) -> bool:
+        """Chip còn giữ cấu hình đã ghi? Sai = chip đã bị reset (dữ liệu vẫn ra nhưng sai thang đo)."""
+        try:
+            for reg, want in self.CHECKS:
+                if self.bus.read_byte_data(self.addr, reg) != want:
+                    return False
+        except OSError:
+            return True        # lỗi bus thoáng qua, để lần sau
         return True
 
     def _fail(self):
@@ -188,6 +201,12 @@ class Bmi160:
             self._fail()
             return None
         self.fail_run = 0
+        self.n_ok += 1
+        if self.n_ok % self.CHECK_EVERY == 0 and not self.config_ok():
+            self.glitch += 1
+            if time.monotonic() - self.last_recover > 0.3:
+                self.recover()
+            return None
         g, a = self.GYRO_LSB, self.ACC_LSB
         s = (v[0] / g, v[1] / g, v[2] / g, v[3] / a, v[4] / a, v[5] / a)
         # Loại mẫu hỏng do nhiễu/va chạm trên bus I2C: tràn thang đo, toàn 0, hoặc nhảy vọt không thể có
@@ -209,6 +228,7 @@ class Mpu6050(Bmi160):
     NAME = "MPU6050"
     GYRO_LSB = 32.8            # ±1000 dps
     ACC_LSB = 8192.0           # ±4 g
+    CHECKS = ((0x6B, 0x01), (0x1B, 0x10), (0x1C, 0x08))
     WHO_OK = (0x68, 0x69, 0x70, 0x71, 0x72, 0x73, 0x98)   # MPU6050 và vài bản clone/MPU6500
 
     def __init__(self, bus_no=IMU_BUS, addr=MPU6050_ADDR):
@@ -386,6 +406,7 @@ class Robot:
         self.cal_b = [0.0, 0.0, 0.0]      # tổng nửa sau
         self.cal_nb = 0
         self.cal_done_t = 0.0
+        self.seen_resets = 0
         self.last_mouse = (0, 0)
         self.flow_last_yaw = 0.0
         self.last_motion = 0.0
@@ -434,6 +455,13 @@ class Robot:
         if not self.imu_ok:
             return
         s = self.imu.read()
+        if self.imu.resets != self.seen_resets:
+            self.seen_resets = self.imu.resets
+            still = time.monotonic() - self.last_motion > 1.0 and not self.calibrating
+            print("[IMU] Chip bị reset giữa chừng (nghi sụt nguồn/nhiễu) -> " +
+                  ("đo lại bias, GIỮ YÊN XE" if still else "giữ bias cũ vì xe đang động, yaw có thể lệch"))
+            if still:
+                self.start_calibration()
         if s is None:
             return
         gx, gy, gz, ax, ay, az = s
