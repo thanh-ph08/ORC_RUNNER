@@ -93,7 +93,7 @@ Kiến trúc: ESP32#1 là I2C master (SDA 21, SCL 22), chung bus với ESP32#2 (
 Bảng này chỉ là cách mình ghép 4 hàng chân bạn đưa vào từng motor; đổi trong `MOTOR_IN1/MOTOR_IN2` ở `config.h`. GPIO 12, 2, 15, 5 là chân strapping của ESP32: nếu board không boot hoặc không nạp được thì rút các dây đó ra lúc cấp nguồn.
 
 ### Encoder (ESP32#2) — "Rotary Encoder 100 xung 5VDC"
-Dây đỏ = nguồn, đen = GND, 2 dây còn lại = A, B (collector hở). **Cấp nguồn 3.3V** để tín hiệu ra 3.3V; cấp 5V thì tín hiệu 5V sẽ vượt mức chịu của chân ESP32. Chân tạm: bắn banh A/B = 32/33, nâng hạ A/B = 25/26, sửa ở đầu `ORC_Encoder.ino`. Đọc x4 => 400 count/vòng.
+Dây đỏ = nguồn, đen = GND, 2 dây còn lại = A, B (collector hở). **Cấp nguồn 3.3V** để tín hiệu ra 3.3V; cấp 5V thì tín hiệu 5V sẽ vượt mức chịu của chân ESP32. Chân (ESP32-S3 Control Hub): bắn banh A/B = GPIO1/2 (A0/A1), nâng hạ A/B = GPIO6/7 (D3/D4), sửa ở đầu `ORC_Encoder.ino`. Đọc x4 => 400 count/vòng.
 
 ### Raspberry Pi 3B+ (số chân theo GPIO/BCM)
 | Chức năng | Chân Pi | Nối tới |

@@ -8,7 +8,7 @@
  *   !! CẤP NGUỒN ENCODER 3.3V (datasheet cho phép 5V hoặc 3.3V). Nếu cấp 5V thì tín hiệu ra 5V,
  *   !! vượt mức chịu của chân ESP32 (3.3V). Chân A/B dùng INPUT_PULLUP nội; nếu xung yếu/nhiễu thì thêm trở 10k kéo lên 3.3V.
  *
- * Board: "ESP32 Dev Module" (core esp32 của Espressif hoặc esp32_bluepad32 đều được).
+ * Board: "ESP32S3 Dev Module" (OhStem ORC Control Hub rev D). Tools → USB CDC On Boot: Enabled để Serial Monitor hoạt động qua cổng USB-C.
  * Chân I2C: SDA 11, SCL 12 (nối chung bus với ESP32#1, RPi, hub Ohstem; cần trở kéo lên 3.3V trên bus).
  *
  * Đọc x4 (cả 2 cạnh của cả 2 kênh) => 400 count / vòng. ESP32#2 chỉ đếm + tính tốc độ (count/s);
@@ -20,8 +20,10 @@
 
 // ============================ CẤU HÌNH ============================
 // (Chân tạm — sửa lại cho đúng dây của bạn.)
-const int SHOOTER_PIN_A = 32, SHOOTER_PIN_B = 33;
-const int LIFT_PIN_A    = 25, LIFT_PIN_B    = 26;
+// Board: OhStem ORC Control Hub rev D (ESP32-S3-WROOM). Trên S3, GPIO26–32 là flash, không dùng được.
+// Chân dưới đây là chân Grove của board: A0=GPIO1, A1=GPIO2, D3=GPIO6, D4=GPIO7 (đối chiếu chữ in trên board).
+const int SHOOTER_PIN_A = 1, SHOOTER_PIN_B = 2;     // A0, A1
+const int LIFT_PIN_A    = 6, LIFT_PIN_B    = 7;     // D3, D4
 const int I2C_SDA = 11, I2C_SCL = 12;   // ESP32#2: SDA = GPIO11, SCL = GPIO12 (ESP32#1 vẫn dùng 21/22, mỗi board chọn chân riêng)
 const uint32_t I2C_CLOCK = 100000;     // khớp ESP32#1
 
