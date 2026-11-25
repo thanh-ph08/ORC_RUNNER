@@ -113,6 +113,9 @@ class Bmi160:
         self.glitch = 0         # số mẫu bị loại vì giá trị vô lý (nhiễu bus I2C)
         self.last = None        # mẫu gyro hợp lệ gần nhất
         self.rej_run = 0        # số mẫu liên tiếp bị loại
+        self.fail_run = 0       # số lần đọc liên tiếp lỗi / toàn 0 (chip chết, bus treo)
+        self.resets = 0         # số lần chip phải khởi tạo lại
+        self.last_recover = 0.0
 
     def begin(self) -> bool:
         try:
@@ -134,6 +137,24 @@ class Bmi160:
         time.sleep(0.05)
         return True
 
+    def _fail(self):
+        self.fail_run += 1
+        if self.fail_run >= 25 and time.monotonic() - self.last_recover > 0.3:
+            self.recover()
+
+    def recover(self) -> bool:
+        """Khởi tạo lại chip sau khi nó bị reset / bus treo."""
+        self.last_recover = time.monotonic()
+        self.fail_run = 0
+        self.last = None
+        try:
+            ok = self.begin()
+        except OSError:
+            ok = False
+        if ok:
+            self.resets += 1
+        return ok
+
     def read_temp(self):
         """Nhiệt độ chip [°C] (thanh ghi 0x20/0x21)"""
         try:
@@ -149,8 +170,14 @@ class Bmi160:
             b = self.bus.read_i2c_block_data(self.addr, 0x0C, 12)
         except OSError:
             self.err += 1
+            self._fail()
             return None
         v = struct.unpack("<6h", bytes(b))
+        if not any(v):                         # toàn 0 = chip đang ở chế độ ngủ (vừa bị reset do sụt nguồn / lỗi bus)
+            self.glitch += 1
+            self._fail()
+            return None
+        self.fail_run = 0
         s = (v[0] / 32.8, v[1] / 32.8, v[2] / 32.8, v[3] / 8192.0, v[4] / 8192.0, v[5] / 8192.0)
         # Loại mẫu hỏng do nhiễu/va chạm trên bus I2C: tràn thang đo, toàn 0, hoặc nhảy vọt không thể có
         bad = any(x in (-32768, 32767) for x in v) or not any(v) \
@@ -491,7 +518,7 @@ def imu_test(seconds=60):
             time.sleep(0.002)
         if n:
             print(f"{int(time.monotonic() - t_end + seconds):3d} | {sg[0]/n:7.3f} {sg[1]/n:7.3f} {sg[2]/n:7.3f} | {sa/n:.3f} | "
-                  f"{imu.read_temp():.1f} °C | {n} | {imu.glitch} | {imu.err}")
+                  f"{imu.read_temp():.1f} °C | {n} | {imu.glitch} | {imu.err} | reset={imu.resets}")
 
 
 def main():
@@ -535,7 +562,7 @@ def main():
                 last_print = t
                 print(f"x={bot.x:7.1f} y={bot.y:7.1f} yaw={math.degrees(bot.yaw):7.2f}° | chuột:{'OK' if bot.mouse.connected else 'chưa cắm'} "
                       f"raw=({bot.raw_x},{bot.raw_y}) | IMU:{'OK' if bot.imu_ok else 'LỖI'}{' (đang cân gyro)' if bot.calibrating else ''}"
-                      f" nhiễu={bot.imu.glitch} lỗiI2C={bot.imu.err}")
+                      f" nhiễu={bot.imu.glitch} lỗiI2C={bot.imu.err} reset={bot.imu.resets}")
             time.sleep(0.0005)
     except KeyboardInterrupt:
         pass
