@@ -61,10 +61,11 @@ elif mode == "rx":
     else:
         print("=> ESP32#1 -> Pi HOẠT ĐỘNG")
 elif mode == "tx":
-    body = struct.pack("<BBB3f3f2ihx", 1, 1, 0, 300.0, 300.0, 1.57, 0, 0, 0, 0, 0, 0)[:36] if False else bytes(39)
+    body = bytes(39)                       # gói toạ độ giả toàn số 0 (hợp lệ: CRC đúng) => ESP32 sẽ hiện x=0 y=0 th=0
     frame = b"\xAA\x55" + body + bytes([crc8(body)])
     t_end = time.time() + 10
     n = 0
     while time.time() < t_end:
         ser.write(frame); n += 1; time.sleep(0.01)
-    print(f"Đã gửi {n} khung giả. Xem Serial Monitor ESP32#1: dòng 'mất Raspberry Pi' phải biến mất hoặc 'lỗi gói Pi' tăng (khung giả có thể bị coi là sai gói, nhưng nghĩa là byte đã tới).")
+    print(f"Đã gửi {n} khung giả. Nhìn Serial Monitor ESP32#1 (115200 baud): nếu nhận được thì dòng '! mất Raspberry Pi' biến mất "
+          "và dòng x=... đổi thành x=0 y=0 th=0.0 (có thể kèm '[POSE] Pi không xác nhận lệnh đặt toạ độ'). Báo 'lỗi gói Pi' tăng = byte tới nhưng sai CRC/nhiễu.")
