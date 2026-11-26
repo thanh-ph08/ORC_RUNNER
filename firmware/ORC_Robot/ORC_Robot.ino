@@ -21,6 +21,9 @@
  *   e = in count encoder, l = đặt lift 0 mm tại chỗ, +/- = tốc độ bắn ± 100 rpm, x = bật/tắt bắn
  */
 #include <Arduino.h>
+#if __has_include(<esp_system.h>)
+#include <esp_system.h>
+#endif
 #include <Wire.h>
 #include <math.h>
 #include <Bluepad32.h>
@@ -120,6 +123,18 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Log.println("\n=== ORC Robot — ESP32#1 ===");
+#if __has_include(<esp_system.h>)
+  {
+    esp_reset_reason_t r = esp_reset_reason();
+    const char *why = r == ESP_RST_POWERON ? "bật nguồn / cắm điện (bình thường)" :
+                      r == ESP_RST_BROWNOUT ? "BROWNOUT: SỤT NGUỒN (nguồn yếu / động cơ-servo kéo sập 3V3)" :
+                      r == ESP_RST_PANIC ? "PANIC: code bị lỗi (crash)" :
+                      r == ESP_RST_TASK_WDT || r == ESP_RST_INT_WDT || r == ESP_RST_WDT ? "WATCHDOG: vòng lặp bị treo" :
+                      r == ESP_RST_SW ? "khởi động lại bằng phần mềm" :
+                      r == ESP_RST_EXT ? "chân EN / nút reset" : "khác";
+    Log.printf("[BOOT] lý do khởi động lại: %s (mã %d)\n", why, (int)r);
+  }
+#endif
 
   motorsBegin();
   i2cBusRecover();                          // gỡ kẹt bus (slave giữ SDA thấp sau khi ESP32 reset giữa chừng)
