@@ -2,14 +2,15 @@
 uart_test.py — kiểm tra dây UART giữa Raspberry Pi và ESP32#1, KHÔNG cần chạy orc_pi.py.
 Dừng dịch vụ trước:  sudo systemctl stop orc-pi
 
-  sudo python3 uart_test.py loop   # nối tạm chân TX (GPIO14, chân 8) với RX (GPIO15, chân 10) của Pi bằng 1 sợi dây; bỏ hết dây tới ESP32
+  sudo python3 uart_test.py loop [baud]   # nối tạm chân TX (GPIO14, chân 8) với RX (GPIO15, chân 10) của Pi bằng 1 sợi dây; bỏ hết dây tới ESP32
   sudo python3 uart_test.py rx     # nghe ESP32#1 trong 8 s (ESP32 phải đang chạy bản ORC_Robot mới): kỳ vọng thấy khung A5 5A
   sudo python3 uart_test.py tx     # Pi gửi liên tục khung toạ độ giả 10 s; ESP32 sẽ ngừng báo "mất Raspberry Pi" nếu nhận được
 """
 import sys, time, struct
 import serial
 
-PORT, BAUD = "/dev/serial0", 921600
+PORT = "/dev/serial0"
+BAUD = int(sys.argv[2]) if len(sys.argv) > 2 else 921600   # vd: sudo python3 uart_test.py loop 115200
 
 def crc8(b):
     c = 0
