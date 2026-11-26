@@ -1,7 +1,7 @@
 """
 uart_link.py — thử UART hai chiều với ESP32#1 (nạp ORC_UartTest.ino vào ESP32#1). Dừng dịch vụ trước:  sudo systemctl stop orc-pi
     sudo python3 uart_link.py [baud]
-Pi gửi 20 khung/giây sang ESP32 và nghe ESP32; mỗi giây in:
+Pi gửi 5 khung/giây sang ESP32 (đèn D2 của ESP32 chớp mỗi khi nhận đúng 1 khung) và nghe ESP32; mỗi giây in:
   ESP32 -> Pi : số khung đúng / sai đã nhận, seq cuối
   Pi -> ESP32 : số khung mà ESP32 BÁO là đã nhận đúng từ Pi (đọc từ chính khung ESP32 gửi về)
 """
@@ -66,7 +66,7 @@ def main():
             except serial.SerialException:
                 pass
             seq[0] += 1
-            time.sleep(0.05)
+            time.sleep(0.2)
     threading.Thread(target=tx, daemon=True).start()
 
     ps = Parser()
@@ -86,7 +86,7 @@ def main():
                 print(a + "   |   " + b)
                 if ps.bytes == 0:
                     print("   ! chưa nhận byte nào từ ESP32: kiểm tra ESP32 GPIO23 -> Pi chân 10, GND chung, và ESP32 đang chạy ORC_UartTest")
-                elif seq[0] > 40 and esp_got == 0:
+                elif seq[0] > 10 and esp_got == 0:
                     print("   ! ESP32 nghe được Pi? Chưa: kiểm tra Pi chân 8 -> ESP32 GPIO34 (đừng đấu chéo/đảo)")
     except KeyboardInterrupt:
         pass

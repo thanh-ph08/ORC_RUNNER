@@ -5,13 +5,17 @@
  * Dây:  ESP32 GPIO23 (TX2) -> Pi chân 10 (GPIO15, RXD)     ESP32 GPIO34 (RX2) <- Pi chân 8 (GPIO14, TXD)     GND chung
  *
  * ESP32 mỗi 100 ms gửi khung  A5 5A len payload crc8  (payload: 0x30, seq, số khung ĐÚNG đã nhận từ Pi, số khung SAI) sang Pi.
- * Pi (uart_link.py) mỗi 50 ms gửi khung  AA 55 len payload crc8 (payload: 0x31, seq) sang ESP32.
+ * Pi (uart_link.py) mỗi 200 ms gửi khung  AA 55 len payload crc8 (payload: 0x31, seq) sang ESP32.
+ * Mỗi khi nhận ĐÚNG 1 khung từ Pi, đèn D2 (GPIO2) chớp 1 lần (khung sai hoặc không có gì thì không chớp). Pi gửi 5 khung/giây nên đèn chớp 5 lần/giây.
  * Mỗi 0.5 s ESP32 in lên Serial Monitor số khung nhận được từ Pi. Mỗi 1 s Pi in số khung nhận từ ESP32 và số khung ESP32 báo đã nhận từ Pi.
  */
 #include <Arduino.h>
 
 static const int RX_PIN = 34, TX_PIN = 23;
 static const uint32_t BAUD = 921600;
+static const int LED_PIN = 2;                 // D2 (đèn trên board ESP32 DevKit thường ở GPIO2): chớp 1 lần mỗi khi nhận ĐÚNG 1 khung từ Pi
+static const uint32_t LED_MS = 40;            // thời gian sáng mỗi lần chớp
+static uint32_t ledOffAt = 0;
 
 static uint8_t crc8(const uint8_t *d, size_t n) {          // CRC-8 đa thức 0x07 (giống orc_protocol.h)
   uint8_t c = 0;
@@ -50,7 +54,7 @@ static void parseRx() {                                    // AA 55 len payload 
       case 2: if (b >= 1 && b <= sizeof(buf)) { len = b; idx = 0; st = 3; } else st = 0; break;
       case 3: buf[idx++] = b; if (idx == len) st = 4; break;
       case 4:
-        if (crc8(buf, len) == b && buf[0] == 0x31) { rxOk++; lastPiSeq = buf[1]; lastPiMs = millis(); }
+        if (crc8(buf, len) == b && buf[0] == 0x31) { rxOk++; lastPiSeq = buf[1]; lastPiMs = millis(); digitalWrite(LED_PIN, HIGH); ledOffAt = millis() + LED_MS; }
         else rxBad++;
         st = 0;
         break;
@@ -59,6 +63,8 @@ static void parseRx() {                                    // AA 55 len payload 
 }
 
 void setup() {
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
   Serial.begin(115200);
   delay(300);
   Serial.println("\n=== ORC_UartTest (ESP32) ===");
@@ -71,6 +77,7 @@ void loop() {
   parseRx();
   static uint32_t tTx = 0, tPrint = 0;
   uint32_t now = millis();
+  if (ledOffAt && (int32_t)(now - ledOffAt) >= 0) { digitalWrite(LED_PIN, LOW); ledOffAt = 0; }   // tắt đèn sau LED_MS, không dùng delay
   if (now - tTx >= 100) { tTx = now; sendFrame(); }
   if (now - tPrint >= 500) {
     tPrint = now;
