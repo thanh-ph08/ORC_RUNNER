@@ -95,12 +95,34 @@ static void telemetry() {
   if (!encFresh()) Log.println("  ! mất ESP32#2 (encoder)");
 }
 
+// Nếu một slave đang giữ SDA ở mức thấp (do master reset giữa lúc truyền), bơm tối đa 9 xung SCL cho nó nhả SDA rồi gửi STOP.
+static void i2cBusRecover() {
+  pinMode(I2C_SDA, INPUT_PULLUP);
+  pinMode(I2C_SCL, OUTPUT);
+  digitalWrite(I2C_SCL, HIGH);
+  delayMicroseconds(10);
+  bool stuck = digitalRead(I2C_SDA) == LOW;
+  for (int i = 0; i < 9 && digitalRead(I2C_SDA) == LOW; i++) {
+    digitalWrite(I2C_SCL, LOW);  delayMicroseconds(10);
+    digitalWrite(I2C_SCL, HIGH); delayMicroseconds(10);
+  }
+  pinMode(I2C_SDA, OUTPUT);                 // STOP: SDA lên cao khi SCL đang cao
+  digitalWrite(I2C_SDA, LOW);  delayMicroseconds(10);
+  digitalWrite(I2C_SCL, HIGH); delayMicroseconds(10);
+  digitalWrite(I2C_SDA, HIGH); delayMicroseconds(10);
+  pinMode(I2C_SDA, INPUT_PULLUP);
+  pinMode(I2C_SCL, INPUT_PULLUP);
+  Serial.printf("[I2C] SDA %s lúc khởi động%s\n", stuck ? "BỊ KẸT THẤP" : "bình thường",
+                stuck && digitalRead(I2C_SDA) == HIGH ? " -> đã gỡ" : (stuck ? " -> VẪN KẸT, kiểm tra nguồn/GND/dây của các board I2C" : ""));
+}
+
 void setup() {
   Serial.begin(115200);
   delay(300);
   Log.println("\n=== ORC Robot — ESP32#1 ===");
 
   motorsBegin();
+  i2cBusRecover();                          // gỡ kẹt bus (slave giữ SDA thấp sau khi ESP32 reset giữa chừng)
   Wire.begin(I2C_SDA, I2C_SCL, I2C_CLOCK);
   Wire.setTimeOut(15);                      // ms — slave treo thì không kẹt cả vòng điều khiển
   odometryBegin();                          // UART2 tới Raspberry Pi
