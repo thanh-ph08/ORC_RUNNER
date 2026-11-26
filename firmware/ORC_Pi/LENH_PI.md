@@ -76,3 +76,10 @@ Các hằng hay sửa: `IMU_TYPE` ("mpu6050" / "bmi160"), `MPU6050_ADDR`, `IMU_B
 ## Lệnh gõ trong Serial Monitor của ESP32#1 (115200)
 `r` đặt lại vị trí xuất phát · `a` chạy tự động · `s` dừng · `t` bật/tắt telemetry · `f` số đếm chuột · `g` gyro cộng dồn ·
 `z` xoá bộ đếm · `c` đo lại bias gyro · `e` encoder · `l` đặt 0 cho nâng hạ · `+` `-` đổi rpm bắn · `x` bật/tắt bắn · `i` quét I2C
+
+## Liên kết I2C tới ESP32#1 (bus 3)
+```
+sudo i2cdetect -y 3                    # thấy 43 khi ESP32#1 đang chạy bản mới (PI_LINK_I2C 1)
+sudo i2cdetect -y 1                    # bus của IMU và hub: 68 (IMU), 54 (hub servo), 42 (ESP32#2)
+```
+Trên Pi cần `dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=5,i2c_gpio_scl=6,i2c_gpio_delay_us=2` trong `/boot/firmware/config.txt`, rồi reboot. Dây: Pi GPIO5 (chân 29) với ESP32#1 GPIO18, Pi GPIO6 (chân 31) với ESP32#1 GPIO19, GND chung, trở kéo lên 4.7k về 3.3V trên SDA và SCL.

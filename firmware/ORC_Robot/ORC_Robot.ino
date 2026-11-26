@@ -94,7 +94,14 @@ static void telemetry() {
                 gripClosed ? "đóng" : "mở", guideSpeedPct,
                 (unsigned long)poseErrCount, (unsigned long)encErrCount,
                 robotMode == RM_AUTO ? "AUTO" : "MAN", autoStatus());
-  if (!poseFresh()) Log.println("  ! mất Raspberry Pi (toạ độ) — kiểm tra dây TX/RX và orc_pi.py");
+  if (!poseFresh()) {
+#if PI_LINK_I2C
+    Log.printf("  ! mất Raspberry Pi (toạ độ) — I2C: Pi đã đọc %lu lần, ghi %lu lần. Kiểm tra dây GPIO18/19 <-> Pi GPIO5/6, trở kéo lên 4.7k, GND, và orc_pi.py\n",
+               (unsigned long)piLinkReads(), (unsigned long)piLinkWrites());
+#else
+    Log.println("  ! mất Raspberry Pi (toạ độ) — kiểm tra dây TX/RX và orc_pi.py");
+#endif
+  }
   if (!encFresh()) Log.println("  ! mất ESP32#2 (encoder)");
 }
 
@@ -140,7 +147,7 @@ void setup() {
   i2cBusRecover();                          // gỡ kẹt bus (slave giữ SDA thấp sau khi ESP32 reset giữa chừng)
   Wire.begin(I2C_SDA, I2C_SCL, I2C_CLOCK);
   Wire.setTimeOut(15);                      // ms — slave treo thì không kẹt cả vòng điều khiển
-  odometryBegin();                          // UART2 tới Raspberry Pi
+  odometryBegin();                          // liên kết tới Raspberry Pi (I2C slave trên Wire1, hoặc UART2 nếu PI_LINK_I2C 0)
   servosBegin();                            // hub.begin() gọi lại Wire.begin(), nên đặt lại clock sau đó
   Wire.setClock(I2C_CLOCK);
   imuBegin();                               // MPU6050 trên Control Hub: ESP32#1 là master duy nhất của bus

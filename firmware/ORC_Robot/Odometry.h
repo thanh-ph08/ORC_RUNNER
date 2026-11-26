@@ -1,5 +1,8 @@
 /*
- * Odometry.h — nhận toạ độ x, y, yaw từ Raspberry Pi qua UART (Pi lo BMI160 + chuột optical flow)
+ * Odometry.h — nhận toạ độ x, y, yaw từ Raspberry Pi (Pi lo MPU6050 + chuột optical flow)
+ *
+ * PI_LINK_I2C = 1 (mặc định, xem config.h): bus I2C riêng, Pi master ghi PosePacket vào ESP32#1 (slave 0x43 trên Wire1),
+ * Pi đọc lại PiStatus (lệnh đặt toạ độ / đo gyro / xoá bộ đếm + log). PI_LINK_I2C = 0: UART như bên dưới.
  *
  * Pi tự đẩy gói 0xAA 0x55 + PosePacket(40 byte) khoảng 200 lần/giây; ESP32 chỉ đọc, kiểm tra CRC rồi dùng gói mới nhất.
  * Lệnh gửi cho Pi (đặt toạ độ, đo lại gyro, xoá bộ đếm) đi theo khung 0xA5 0x5A + len + payload + crc8.
@@ -26,6 +29,62 @@ static uint32_t poseAwaitMs = 0;
 
 bool poseFresh() { return poseEverOk && (millis() - poseLastOkMs) < SENSOR_STALE_MS; }
 
+#if PI_LINK_I2C
+#include <Wire.h>
+static volatile uint8_t plFlags = 0, plCntSet = 0, plCntCal = 0, plCntClear = 0, plBootId = 0;
+static volatile float plSetX = 0, plSetY = 0, plSetYaw = 0;
+static volatile bool plRxNew = false;
+static volatile uint32_t plReads = 0, plWrites = 0;
+static uint8_t plRxBuf[sizeof(PosePacket)];
+static portMUX_TYPE plMux = portMUX_INITIALIZER_UNLOCKED;
+
+uint32_t piLinkReads()  { return plReads; }
+uint32_t piLinkWrites() { return plWrites; }
+
+// Callback I2C (chạy trong luồng/ISR của driver): KHÔNG gọi Log, delay hay Serial ở đây.
+static void plOnReceive(int n) {
+  uint8_t tmp[sizeof(PosePacket) + 1];
+  int k = 0;
+  while (Wire1.available()) {
+    uint8_t b = (uint8_t)Wire1.read();
+    if (k < (int)sizeof(tmp)) tmp[k++] = b;
+  }
+  plWrites++;
+  if (k == (int)sizeof(tmp) && tmp[0] == PILINK_W_POSE) {
+    portENTER_CRITICAL_SAFE(&plMux);
+    memcpy(plRxBuf, tmp + 1, sizeof(PosePacket));
+    plRxNew = true;
+    portEXIT_CRITICAL_SAFE(&plMux);
+  }
+}
+
+static void plOnRequest() {
+  PiStatus st;
+  memset(&st, 0, sizeof(st));
+  st.magic = PILINK_STATUS_MAGIC;
+  st.flags = plFlags;
+  st.cntSetPose = plCntSet; st.cntCalGyro = plCntCal; st.cntClearRaw = plCntClear;
+  st.bootId = plBootId;
+  st.setX = plSetX; st.setY = plSetY; st.setYaw = plSetYaw;
+  st.logLen = (uint8_t)Log.take(st.log, sizeof(st.log));
+  st.crc = orcCrc8((const uint8_t *)&st, sizeof(st) - 1);
+  Wire1.write((const uint8_t *)&st, sizeof(st));
+  plReads++;
+}
+
+void odometryBegin() {
+  plBootId = (uint8_t)(esp_random() & 0xFF);
+  Wire1.onReceive(plOnReceive);
+  Wire1.onRequest(plOnRequest);
+  bool ok = Wire1.begin((uint8_t)ORC_PILINK_ADDR, PILINK_SDA, PILINK_SCL, 100000);
+  Log.printf("[LINK] I2C slave 0x%02X (Pi master) trên GPIO%d/GPIO%d: %s\n", ORC_PILINK_ADDR, PILINK_SDA, PILINK_SCL, ok ? "OK" : "LỖI khởi tạo");
+}
+
+static void rpiSend(const uint8_t *, uint8_t) {}     // không dùng ở chế độ I2C (giữ cho Imu.h / Log.h)
+#else
+uint32_t piLinkReads()  { return 0; }
+uint32_t piLinkWrites() { return 0; }
+
 void odometryBegin() {
   Serial2.setRxBufferSize(1024);
   Serial2.begin(RPI_BAUD, SERIAL_8N1, RPI_RX_PIN, RPI_TX_PIN);
@@ -37,14 +96,21 @@ static void rpiSend(const uint8_t *payload, uint8_t len) {
   Serial2.write(payload, len);
   Serial2.write(orcCrc8(payload, len));
 }
+#endif
 
 // Đặt toạ độ (cả trên Pi lẫn bản sao ở ESP32#1)
 void setPose(float x, float y, float th) {
   poseX = x; poseY = y; poseTh = th;
+#if PI_LINK_I2C
+  plSetX = x; plSetY = y; plSetYaw = th;
+  plCntSet = (uint8_t)(plCntSet + 1);
+  plFlags |= PILINK_F_SETPOSE;                       // xoá khi Pi xác nhận (setAck trong PosePacket)
+#else
   uint8_t buf[13];
   buf[0] = FLOW_CMD_SET_POSE;
   memcpy(buf + 1, &x, 4); memcpy(buf + 5, &y, 4); memcpy(buf + 9, &th, 4);
   rpiSend(buf, sizeof(buf));
+#endif
   poseAckWanted = (uint8_t)(poseAckSeen + 1);
   poseAwaitAck = true;
   poseAwaitMs = millis();
@@ -53,11 +119,19 @@ void resetPoseToStart() {
   setPose(START_X_MM, START_Y_MM, START_TH_RAD);
   Log.println("[POSE] Đặt lại về điểm xuất phát");
 }
+#if PI_LINK_I2C
+void flowCalibrateGyro() { plCntCal = (uint8_t)(plCntCal + 1); Log.println("[POSE] Pi đo lại gyro: GIỮ YÊN XE ~2 s"); }
+void flowClearRaw()      { plCntClear = (uint8_t)(plCntClear + 1); }
+#else
 void flowCalibrateGyro() { uint8_t c = FLOW_CMD_CAL_GYRO; rpiSend(&c, 1); Log.println("[POSE] Pi đo lại gyro: GIỮ YÊN XE ~2 s"); }
 void flowClearRaw()      { uint8_t c = FLOW_CMD_CLEAR_RAW; rpiSend(&c, 1); }
+#endif
 
 static void applyPose(const PosePacket &p) {
   poseAckSeen = p.setAck;
+#if PI_LINK_I2C
+  if (p.setAck == poseAckWanted) plFlags &= (uint8_t)~PILINK_F_SETPOSE;     // Pi đã áp dụng lệnh đặt toạ độ
+#endif
   if (poseAwaitAck) {
     if (p.setAck == poseAckWanted) poseAwaitAck = false;
     else if (millis() - poseAwaitMs > 200) { poseAwaitAck = false; Log.println("[POSE] Pi không xác nhận lệnh đặt toạ độ"); }
@@ -72,7 +146,20 @@ static void applyPose(const PosePacket &p) {
   poseOkCount++;
 }
 
-// Gọi mỗi vòng điều khiển: đọc hết byte đang chờ, tìm khung, kiểm tra CRC
+// Gọi mỗi vòng điều khiển
+#if PI_LINK_I2C
+void odometryUpdate() {
+  if (!plRxNew) return;
+  PosePacket p;
+  portENTER_CRITICAL(&plMux);
+  memcpy(&p, plRxBuf, sizeof(p));
+  plRxNew = false;
+  portEXIT_CRITICAL(&plMux);
+  if (orcCrc8((const uint8_t *)&p, sizeof(p) - 1) == p.crc) applyPose(p);
+  else poseErrCount++;
+}
+#else
+// đọc hết byte đang chờ, tìm khung, kiểm tra CRC
 void odometryUpdate() {
   static uint8_t buf[sizeof(PosePacket)];
   static uint8_t state = 0, idx = 0;                // 0: chờ SYNC0, 1: chờ SYNC1, 2: đang nhận gói
@@ -94,3 +181,4 @@ void odometryUpdate() {
     }
   }
 }
+#endif

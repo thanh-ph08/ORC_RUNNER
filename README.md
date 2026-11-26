@@ -95,6 +95,17 @@ Bảng này chỉ là cách mình ghép 4 hàng chân bạn đưa vào từng mo
 ### Encoder (ESP32#2) — "Rotary Encoder 100 xung 5VDC"
 Dây đỏ = nguồn, đen = GND, 2 dây còn lại = A, B (collector hở). **Cấp nguồn 3.3V** để tín hiệu ra 3.3V; cấp 5V thì tín hiệu 5V sẽ vượt mức chịu của chân ESP32. Chân (ESP32-S3 Control Hub): bắn banh A/B = GPIO1/2 (A0/A1), nâng hạ A/B = GPIO6/7 (D3/D4), sửa ở đầu `ORC_Encoder.ino`. Đọc x4 => 400 count/vòng.
 
+### Liên kết Pi ↔ ESP32#1 bằng I2C riêng (mặc định, `LINK = "i2c"` trong `orc_pi.py`, `PI_LINK_I2C 1` trong `config.h`)
+Một bus I2C **chỉ dành cho Pi và ESP32#1**, tách khỏi bus của hub, ESP32#2 và IMU: Pi là master (bus 3, I2C phần mềm), ESP32#1 là slave 0x43 trên cổng I2C thứ hai (`Wire1`).
+
+| Pi | ESP32#1 |
+|---|---|
+| GPIO5 (chân 29) = SDA | GPIO18 = SDA |
+| GPIO6 (chân 31) = SCL | GPIO19 = SCL |
+| GND (chân 6) | GND |
+
+Bắt buộc có **trở kéo lên 4.7 kΩ về 3.3V trên cả SDA và SCL** (một bộ duy nhất cho bus này, Pi không có sẵn trở kéo ở GPIO5/6). Trên Pi thêm `dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=5,i2c_gpio_scl=6,i2c_gpio_delay_us=2` vào `/boot/firmware/config.txt` rồi `sudo reboot`; kiểm tra `sudo i2cdetect -y 3` phải thấy `43` khi ESP32#1 đang chạy. ESP32#1 gửi lệnh (đặt toạ độ, đo gyro, xoá bộ đếm) và log cho Pi qua cùng bus, Pi đọc lại mỗi 10 ms. IMU trong cách này vẫn do Pi đọc ở bus 1 (GPIO2/3) như cũ. Muốn quay lại dây UART: `LINK = "uart"` và `PI_LINK_I2C 0`, đấu như bảng UART bên dưới.
+
 ### Raspberry Pi 3B+ (số chân theo GPIO/BCM)
 | Chức năng | Chân Pi | Nối tới |
 |---|---|---|

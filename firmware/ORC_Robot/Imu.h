@@ -44,7 +44,7 @@ static bool imuReadRegs(uint8_t reg, uint8_t *buf, uint8_t n) {
 }
 
 bool imuBegin() {
-#if !IMU_READ_ON_ESP32
+#if !IMU_READ_ON_ESP32 || PI_LINK_I2C
   return false;                              // Pi tự đọc IMU
 #endif
   uint8_t who;
@@ -79,7 +79,7 @@ static void imuRecover() {
 
 // Gọi trong loop() thật thường xuyên; tự giữ nhịp IMU_PERIOD_US.
 void imuStep() {
-#if !IMU_READ_ON_ESP32
+#if !IMU_READ_ON_ESP32 || PI_LINK_I2C
   return;
 #endif
   uint32_t now = micros();

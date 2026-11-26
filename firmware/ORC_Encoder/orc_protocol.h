@@ -4,7 +4,7 @@
  *
  *   ESP32#1 (ORC_Robot)   = I2C MASTER, đọc mọi thứ, điều khiển motor
  *   ESP32#2 (ORC_Encoder) = I2C slave 0x42, đọc 2 encoder (bắn banh + nâng hạ)
- *   RPi     (ORC_Pi)      = nối bằng UART 921600 baud (không còn I2C), BMI160 + chuột optical flow => toạ độ x, y, yaw
+ *   RPi     (ORC_Pi)      = nối ESP32#1 bằng bus I2C riêng (Pi master, ESP32#1 slave 0x43; hoặc UART 921600 nếu PI_LINK_I2C 0), MPU6050 + chuột optical flow => toạ độ x, y, yaw
  *   Hub Ohstem driverV2   = I2C slave 0x54, chỉ dùng cho servo (thư viện OhStemRobotics)
  *
  * Mọi số nhiều byte là little-endian (ESP32 và RP2040 đều little-endian nên chép thẳng struct).
@@ -72,3 +72,26 @@ static inline uint8_t orcCrc8(const uint8_t *d, uint8_t n) {   // CRC-8, đa th�
   }
   return c;
 }
+
+// ---- Liên kết Pi <-> ESP32#1 bằng I2C riêng (PI_LINK_I2C = 1 trong config.h) ----
+// Bus riêng: Pi là MASTER (bus 3, GPIO5/6), ESP32#1 là SLAVE 0x43 trên Wire1 (GPIO18/19). Không dính bus của hub/ESP32#2/IMU.
+//  Pi -> ESP32#1 : Pi ghi 41 byte = PILINK_W_POSE + PosePacket(40 byte, có CRC)     ~100 lần/giây
+//  ESP32#1 -> Pi : Pi đọc 32 byte = PiStatus (lệnh đang chờ + 1 mảnh log)
+#define ORC_PILINK_ADDR     0x43
+#define PILINK_W_POSE       0xA7
+#define PILINK_STATUS_MAGIC 0xA8
+#define PILINK_F_SETPOSE    0x01   // đang chờ Pi xác nhận lệnh đặt toạ độ (setX, setY, setYaw)
+#pragma pack(push, 1)
+struct PiStatus {                // 32 byte
+  uint8_t magic;                 // PILINK_STATUS_MAGIC
+  uint8_t flags;                 // PILINK_F_*
+  uint8_t cntSetPose;            // tăng 1 mỗi lần ESP32#1 ra lệnh đặt toạ độ
+  uint8_t cntCalGyro;            // tăng 1 mỗi lần ra lệnh đo lại gyro
+  uint8_t cntClearRaw;           // tăng 1 mỗi lần ra lệnh xoá bộ đếm thô
+  uint8_t bootId;                // số ngẫu nhiên mỗi lần ESP32#1 khởi động (Pi biết ESP32 vừa reset)
+  float setX, setY, setYaw;      // toạ độ của lệnh đặt toạ độ mới nhất (mm, mm, rad)
+  uint8_t logLen;                // số byte log hợp lệ (0..12)
+  uint8_t log[12];               // một mảnh log (text UTF-8)
+  uint8_t crc;                   // crc8 của 31 byte đầu
+};
+#pragma pack(pop)

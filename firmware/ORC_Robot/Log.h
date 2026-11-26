@@ -8,6 +8,7 @@
 #pragma once
 #include <Arduino.h>
 #include "orc_protocol.h"
+#include "config.h"
 
 static void rpiSend(const uint8_t *payload, uint8_t len);   // định nghĩa trong Odometry.h
 
@@ -27,8 +28,20 @@ class LogTee : public Print {
     return n;
   }
 
-  // Gọi trong loop(): gửi tối đa 1 khung mỗi 5 ms, chỉ khi Serial2 còn chỗ.
+  // Lấy tối đa max byte log từ bộ đệm (dùng cho liên kết I2C: Pi đọc từng mảnh). An toàn khi gọi từ callback I2C.
+  size_t take(uint8_t *buf, size_t max) {
+    size_t n = 0;
+    portENTER_CRITICAL_SAFE(&mux_);
+    while (tail_ != head_ && n < max) { buf[n++] = ring_[tail_]; tail_ = (tail_ + 1) % N; }
+    portEXIT_CRITICAL_SAFE(&mux_);
+    return n;
+  }
+
+  // Gọi trong loop(): gửi tối đa 1 khung mỗi 5 ms, chỉ khi Serial2 còn chỗ. (Chế độ I2C: không làm gì, Pi tự đọc qua take())
   void pump() {
+#if PI_LINK_I2C
+    return;
+#endif
     uint32_t now = millis();
     if (now - lastHb_ >= 1000) {
       uint8_t hb = FLOW_CMD_PING;

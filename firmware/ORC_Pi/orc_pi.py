@@ -27,13 +27,14 @@ Gõ Ctrl+C để thoát. Mỗi 0,5 s in toạ độ ra màn hình.
 import collections
 import math
 import os
+import queue
 import struct
 import sys
 import threading
 import time
 
 import serial
-from smbus2 import SMBus
+from smbus2 import SMBus, i2c_msg
 from web_ui import install_log_tee, start_web
 import evdev
 from evdev import ecodes
@@ -41,7 +42,11 @@ from evdev import ecodes
 # =====================================================================
 # ============================ CẤU HÌNH ===============================
 # =====================================================================
-SERIAL_PORT = "/dev/serial0"
+LINK = "i2c"                        # liên kết Pi <-> ESP32#1: "i2c" = bus riêng (Pi master, ESP32#1 slave 0x43), "uart" = dây UART cũ
+LINK_BUS = 3                        # bus I2C riêng cho liên kết: dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=5,i2c_gpio_scl=6 (GPIO5 = SDA chân 29, GPIO6 = SCL chân 31)
+LINK_ADDR = 0x43                    # địa chỉ ESP32#1 (ORC_PILINK_ADDR)
+LINK_PERIOD = 0.01                  # 100 lần/giây: ghi toạ độ + đọc trạng thái
+SERIAL_PORT = "/dev/serial0"        # chỉ dùng khi LINK = "uart"
 SERIAL_BAUD = 921600
 IMU_BUS = 1                         # bus I2C phần cứng của Pi (GPIO2 = SDA chân 3, GPIO3 = SCL chân 5); đổi 3 nếu tách bus riêng bằng dtoverlay
 WEB_PORT = 8080                    # trang giám sát http://<tên-máy>.local:8080 ; 0 = tắt
@@ -82,6 +87,9 @@ FLOW_CMD_CLEAR_RAW = 0x12
 FLOW_CMD_LOG = 0x20                # ESP32#1 -> Pi: mảnh log (text)
 FLOW_CMD_PING = 0x21               # ESP32#1 -> Pi: nhịp tim 1 Hz
 FLOW_CMD_IMU = 0x22                # ESP32#1 -> Pi: mẫu MPU6050 thô
+PILINK_W_POSE = 0xA7              # Pi ghi vào ESP32#1: 0xA7 + PosePacket(40)   (khớp orc_protocol.h)
+PILINK_STATUS_MAGIC = 0xA8        # Pi đọc từ ESP32#1: PiStatus 32 byte
+PILINK_F_SETPOSE = 0x01
 POSE_FLAG_IMU_OK = 0x01
 POSE_FLAG_MOUSE_OK = 0x02
 POSE_FLAG_CALIBRATING = 0x04
@@ -699,6 +707,87 @@ class Robot:
         return body + bytes([crc8(body)])
 
 
+class PiLink(threading.Thread):
+    """Liên kết I2C riêng tới ESP32#1 (Pi master, ESP32#1 slave 0x43). Chạy nền ~100 Hz:
+       ghi PosePacket, đọc PiStatus (lệnh đặt toạ độ / đo gyro / xoá bộ đếm + mảnh log) rồi đẩy vào hàng đợi cho vòng chính xử lý."""
+
+    def __init__(self, bot, q):
+        super().__init__(daemon=True)
+        self.bot, self.q = bot, q
+        self.bus = None
+        self.ok = 0
+        self.err = 0
+        self.bad = 0
+        self.last_boot = None
+        self.last_set = None
+        self.last_cal = None
+        self.last_clear = None
+        self.warn_t = 0.0
+
+    def _warn(self, msg):
+        t = time.monotonic()
+        if t - self.warn_t > 5.0:
+            self.warn_t = t
+            print(msg)
+
+    def _open(self):
+        if not os.path.exists(f"/dev/i2c-{LINK_BUS}"):
+            self._warn(f"[LINK] CHƯA CÓ /dev/i2c-{LINK_BUS}: thêm vào /boot/firmware/config.txt dòng "
+                       f"dtoverlay=i2c-gpio,bus={LINK_BUS},i2c_gpio_sda=5,i2c_gpio_scl=6,i2c_gpio_delay_us=2 rồi reboot")
+            return False
+        self.bus = SMBus(LINK_BUS)
+        return True
+
+    def handle(self, st: bytes):
+        if len(st) != 32 or st[0] != PILINK_STATUS_MAGIC or crc8(st[:31]) != st[31]:
+            self.bad += 1
+            self._warn(f"[LINK] ESP32#1 trả dữ liệu sai (magic/CRC), {self.bad} lần — kiểm tra dây GPIO5/6 <-> GPIO18/19, trở kéo lên, GND")
+            return
+        self.ok += 1
+        bot = self.bot
+        bot.esp_last = time.monotonic()
+        bot.esp_pings += 1
+        flags, c_set, c_cal, c_clear, boot = st[1], st[2], st[3], st[4], st[5]
+        if boot != self.last_boot:                       # ESP32#1 vừa khởi động lại (hoặc lần đọc đầu): đồng bộ lại bộ đếm
+            if self.last_boot is not None:
+                print("[LINK] ESP32#1 vừa khởi động lại")
+            self.last_boot = boot
+            self.last_set = None
+            self.last_cal, self.last_clear = c_cal, c_clear
+        if (flags & PILINK_F_SETPOSE) and c_set != self.last_set:
+            self.last_set = c_set
+            self.q.put(bytes([FLOW_CMD_SET_POSE]) + st[6:18])
+        if c_cal != self.last_cal:
+            self.last_cal = c_cal
+            self.q.put(bytes([FLOW_CMD_CAL_GYRO]))
+        if c_clear != self.last_clear:
+            self.last_clear = c_clear
+            self.q.put(bytes([FLOW_CMD_CLEAR_RAW]))
+        n = st[18]
+        if 0 < n <= 12:
+            self.q.put(bytes([FLOW_CMD_LOG]) + st[19:19 + n])
+
+    def run(self):
+        while True:
+            t0 = time.perf_counter()
+            try:
+                if self.bus is None and not self._open():
+                    time.sleep(1.0)
+                    continue
+                self.bus.i2c_rdwr(i2c_msg.write(LINK_ADDR, bytes([PILINK_W_POSE]) + self.bot.packet()))
+                rd = i2c_msg.read(LINK_ADDR, 32)
+                self.bus.i2c_rdwr(rd)
+                self.handle(bytes(rd))
+            except OSError as e:
+                self.err += 1
+                self._warn(f"[LINK] Không nói chuyện được với ESP32#1 (0x{LINK_ADDR:02X} trên bus {LINK_BUS}): {e} "
+                           f"— ESP32#1 phải đang chạy bản mới (PI_LINK_I2C 1), dây GPIO18/19, trở kéo lên 4.7k, GND chung. Tổng lỗi {self.err}")
+                time.sleep(0.05)
+            dt = time.perf_counter() - t0
+            if dt < LINK_PERIOD:
+                time.sleep(LINK_PERIOD - dt)
+
+
 class CmdParser:
     """Tách khung lệnh từ ESP32#1: A5 5A len payload crc8(payload)"""
 
@@ -762,10 +851,12 @@ def main():
     if "--imu-test" in sys.argv:
         imu_test()
         return
-    try:
-        ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=0, write_timeout=0.05)
-    except serial.SerialException as e:
-        sys.exit(f"Không mở được {SERIAL_PORT}: {e}\nKiểm tra: raspi-config bật Serial Port phần cứng, tắt login shell, dtoverlay=disable-bt")
+    ser = None
+    if LINK != "i2c":
+        try:
+            ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=0, write_timeout=0.05)
+        except serial.SerialException as e:
+            sys.exit(f"Không mở được {SERIAL_PORT}: {e}\nKiểm tra: raspi-config bật Serial Port phần cứng, tắt login shell, dtoverlay=disable-bt")
     parser = CmdParser()
     try:                                   # ưu tiên thời gian thực cho vòng lặp
         os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(20))
@@ -776,7 +867,14 @@ def main():
     bot = Robot()
     if WEB_PORT:
         start_web(bot, WEB_PORT)
-    print("ORC_Pi sẵn sàng, UART %s %d baud. Giữ yên xe ~%.1f s để đo bias gyro." % (SERIAL_PORT, SERIAL_BAUD, CAL_S))
+    link_q = queue.Queue()
+    link = None
+    if LINK == "i2c":
+        link = PiLink(bot, link_q)
+        link.start()
+        print("ORC_Pi sẵn sàng, liên kết I2C tới ESP32#1 (bus %d, 0x%02X). Giữ yên xe ~%.1f s để đo bias gyro." % (LINK_BUS, LINK_ADDR, CAL_S))
+    else:
+        print("ORC_Pi sẵn sàng, UART %s %d baud. Giữ yên xe ~%.1f s để đo bias gyro." % (SERIAL_PORT, SERIAL_BAUD, CAL_S))
     pkt = bot.packet()
     last_print = 0.0
     try:
@@ -786,17 +884,24 @@ def main():
                 bot.imu_step(now)
             if now - bot.t_flow >= FLOW_PERIOD:
                 bot.flow_step(now)
-            if now - bot.t_pkt >= PKT_PERIOD:
-                bot.t_pkt = now
-                pkt = bot.packet()
-                try:
-                    ser.write(POSE_SYNC + pkt)
-                except serial.SerialTimeoutException:
-                    pass                           # ESP32 chưa đọc kịp, bỏ gói này
-            data = ser.read(256)
-            if data:
-                for payload in parser.feed(data):
-                    bot.handle_rx(payload)
+            if link is not None:
+                while True:                        # lệnh / log từ ESP32#1 do luồng I2C gom về, xử lý ở luồng chính
+                    try:
+                        bot.handle_rx(link_q.get_nowait())
+                    except queue.Empty:
+                        break
+            else:
+                if now - bot.t_pkt >= PKT_PERIOD:
+                    bot.t_pkt = now
+                    pkt = bot.packet()
+                    try:
+                        ser.write(POSE_SYNC + pkt)
+                    except serial.SerialTimeoutException:
+                        pass                       # ESP32 chưa đọc kịp, bỏ gói này
+                data = ser.read(256)
+                if data:
+                    for payload in parser.feed(data):
+                        bot.handle_rx(payload)
             t = time.monotonic()
             if t - last_print > 0.5:
                 last_print = t
@@ -807,7 +912,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        ser.close()
+        if ser is not None:
+            ser.close()
 
 
 if __name__ == "__main__":

@@ -34,6 +34,13 @@ const int  PWM_MAX  = 1023;
 const int      RPI_RX_PIN = 34, RPI_TX_PIN = 23;
 const uint32_t RPI_BAUD   = 921600;
 
+// ===== Liên kết Pi <-> ESP32#1 =====
+//  1 = I2C riêng: Pi master (GPIO5 = SDA chân 29, GPIO6 = SCL chân 31) <-> ESP32#1 slave 0x43 trên Wire1 (GPIO18 = SDA, GPIO19 = SCL).
+//      Cần trở kéo lên 4.7k về 3.3V trên cả SDA và SCL (một bộ duy nhất), GND chung. Không dùng UART2 nữa.
+//  0 = UART2 như cũ (dây ở RPI_RX_PIN / RPI_TX_PIN phía trên)
+#define PI_LINK_I2C 1
+const int PILINK_SDA = 18, PILINK_SCL = 19;
+
 // =====================================================================
 // ===== I2C (ESP32#1 là master): ESP32#2 (encoder) và hub Ohstem (servo) cùng 1 bus =====
 // Cần trở kéo lên 3.3V (2.2k–4.7k) trên SDA/SCL. Nếu hay lỗi đọc, hạ I2C_CLOCK xuống 100000.
