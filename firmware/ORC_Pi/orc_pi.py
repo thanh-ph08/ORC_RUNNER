@@ -43,9 +43,9 @@ from evdev import ecodes
 # =====================================================================
 SERIAL_PORT = "/dev/serial0"
 SERIAL_BAUD = 921600
-IMU_BUS = 3                         # bus I2C phần mềm riêng GPIO5/6 (dtoverlay=i2c-gpio,bus=3,...), tách khỏi ESP32
+IMU_BUS = 1                         # bus I2C phần cứng của Pi (GPIO2 = SDA chân 3, GPIO3 = SCL chân 5); đổi 3 nếu tách bus riêng bằng dtoverlay
 WEB_PORT = 8080                    # trang giám sát http://<tên-máy>.local:8080 ; 0 = tắt
-IMU_TYPE = "esp32"                 # "esp32" = ESP32#1 đọc MPU6050 rồi gửi qua UART (Pi KHÔNG đụng I2C); "mpu6050"/"bmi160" = Pi tự đọc I2C
+IMU_TYPE = "mpu6050"               # "mpu6050"/"bmi160" = Pi tự đọc I2C; "esp32" = ESP32#1 đọc rồi gửi qua UART (cần đặt IMU_READ_ON_ESP32 1 trong config.h)
 MPU6050_ADDR = 0x68                # 0x69 nếu chân AD0 nối 3V3
 BMI160_ADDR = 0x69                 # 0x68 nếu SDO nối GND
 

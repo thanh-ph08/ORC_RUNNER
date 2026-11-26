@@ -40,6 +40,8 @@ const uint32_t RPI_BAUD   = 921600;
 // =====================================================================
 const int      I2C_SDA = 21, I2C_SCL = 22;
 const uint32_t I2C_CLOCK = 100000;   // 100 kHz: ổn định hơn khi Bluetooth (Bluepad32) đang chạy; tăng lên 400000 nếu bus sạch
+// IMU (MPU6050 0x68): 0 = Raspberry Pi tự đọc I2C (mặc định hiện nay, ESP32#1 không đụng IMU); 1 = ESP32#1 đọc rồi gửi sang Pi qua UART (Pi đặt IMU_TYPE = "esp32")
+#define IMU_READ_ON_ESP32 0
 const uint32_t SENSOR_STALE_MS = 80;   // quá lâu không đọc được => coi là mất tín hiệu
 
 // =====================================================================

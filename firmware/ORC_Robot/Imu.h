@@ -44,6 +44,9 @@ static bool imuReadRegs(uint8_t reg, uint8_t *buf, uint8_t n) {
 }
 
 bool imuBegin() {
+#if !IMU_READ_ON_ESP32
+  return false;                              // Pi tự đọc IMU
+#endif
   uint8_t who;
   if (!imuReadRegs(0x75, &who, 1)) { Log.println("[IMU] Không đọc được MPU6050 (0x68) trên bus I2C"); imuS.ok = false; return false; }
   if (who != 0x68 && who != 0x69 && who != 0x70 && who != 0x71 && who != 0x72 && who != 0x73 && who != 0x98) {
@@ -76,6 +79,9 @@ static void imuRecover() {
 
 // Gọi trong loop() thật thường xuyên; tự giữ nhịp IMU_PERIOD_US.
 void imuStep() {
+#if !IMU_READ_ON_ESP32
+  return;
+#endif
   uint32_t now = micros();
   if (now - imuS.lastUs < IMU_PERIOD_US) return;
   imuS.lastUs = now;
