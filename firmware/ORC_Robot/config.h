@@ -83,10 +83,11 @@ const bool INTAKE_REVERSE_WITH_R1 = true; // giữ R1 để đảo chiều xả 
 
 // =====================================================================
 // ===== SHOOTER (L298N #3, motor 2) — PID tốc độ bằng encoder =====
-// Encoder Hall của GA25 (ESP32#2 GPIO8/9), đọc x4. CPR = 4 × xung/vòng trục motor × tỉ số hộp số (nếu bánh bắn ở trục ra).
-// GA25 thường 11 xung/vòng trục motor => 44 × tỉ số. HIỆU CHỈNH: quay tay bánh bắn đúng 10 vòng, gõ 'e', lấy count / 10.
+// Encoder Hall của GA25 (ESP32#2 GPIO8/9), đọc x4. Đã bỏ hộp số => encoder nằm ngay trục bánh bắn.
+// GA25 thường 11 xung/vòng => 44 count/vòng (có loại 7 hoặc 12 xung => 28 / 48).
+// KIỂM TRA: quay tay bánh bắn đúng 10 vòng, gõ 'e', lấy count / 10.
 // =====================================================================
-const float SHOOTER_CPR          = 400.0f;    // count / vòng của BÁNH BẮN (ĐANG LÀ SỐ CŨ, phải đo lại cho GA25)
+const float SHOOTER_CPR          = 44.0f;     // count / vòng của bánh bắn
 const int   SHOOTER_ENC_SIGN     = 1;         // -1 nếu bật bắn mà rpm đo được ÂM
 const int   SHOOTER_DIR          = 1;         // -1 nếu bánh bắn quay ngược (hoặc đảo MOTOR_INVERT)
 const float SHOOTER_RPM_DEFAULT  = 3000.0f;   // tốc độ bắn mặc định
