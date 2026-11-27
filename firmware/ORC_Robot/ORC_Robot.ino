@@ -127,6 +127,22 @@ static void i2cBusRecover() {
 }
 
 RTC_NOINIT_ATTR static uint32_t lastStage;           // phần đang chạy — còn giữ sau khi watchdog reset, để biết treo ở đâu
+RTC_NOINIT_ATTR static uint32_t wdtMagic;            // = WDT_MAGIC nếu lần reset trước do watchdog tự viết bên dưới
+#define WDT_MAGIC 0xC0DE7EEDu
+#include <esp_timer.h>
+// Watchdog tự viết (không phụ thuộc core): timer nền kiểm tra mỗi 0.5 s, loop() đứng yên > 5 s thì ghi dấu rồi esp_restart().
+static volatile uint32_t loopAliveMs = 0;
+static void swWdtCheck(void *) {
+  uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+  if (loopAliveMs && now - loopAliveMs > 5000) { wdtMagic = WDT_MAGIC; esp_restart(); }
+}
+static void swWdtBegin() {
+  static esp_timer_handle_t h;
+  esp_timer_create_args_t a = {};
+  a.callback = swWdtCheck;
+  a.name = "loopwdt";
+  if (esp_timer_create(&a, &h) == ESP_OK) esp_timer_start_periodic(h, 500000);
+}
 // ---- Đo thời gian từng phần của vòng lặp: in "[LOOP] ..." mỗi 2 s để biết phần nào làm chậm ----
 enum { T_PAD, T_LOGIMU, T_ODO, T_ENC, T_CTRL, T_SERVO, T_TELE, T_N };
 static const char *T_NAME[T_N] = {"BP32", "log/imu/serial", "pi-link", "encoder(ESP32#2)", "điều khiển", "servo(hub)", "telemetry"};
@@ -145,9 +161,10 @@ void setup() {
                       r == ESP_RST_SW ? "khởi động lại bằng phần mềm" :
                       r == ESP_RST_EXT ? "chân EN / nút reset" : "khác";
     Log.printf("[BOOT] lý do khởi động lại: %s (mã %d)\n", why, (int)r);
-    if ((r == ESP_RST_TASK_WDT || r == ESP_RST_INT_WDT || r == ESP_RST_WDT) && lastStage >= 1 && lastStage <= T_N)
-      Log.printf("[BOOT] lần trước TREO ở phần: %s\n", T_NAME[lastStage - 1]);
-    lastStage = 0;
+    bool hung = (r == ESP_RST_SW && wdtMagic == WDT_MAGIC) || r == ESP_RST_TASK_WDT || r == ESP_RST_INT_WDT || r == ESP_RST_WDT;
+    if (hung) Log.printf("[BOOT] lần trước vòng lặp TREO > 5 s, kẹt ở phần: %s\n",
+                         (lastStage >= 1 && lastStage <= T_N) ? T_NAME[lastStage - 1] : "không rõ");
+    lastStage = 0; wdtMagic = 0;
   }
 #endif
 
@@ -180,7 +197,7 @@ void setup() {
 #endif
   BP32.enableVirtualDevice(false);          // không tạo "chuột ảo" từ touchpad PS4/PS5
   Log.println("Ghép tay PS4: giữ Share + PS. Tay PS5: giữ Create + PS.");
-  enableLoopWDT();                          // vòng lặp kẹt > 5 s thì tự reset, lần sau in "[BOOT] lần trước TREO ở phần: ..."
+  swWdtBegin();                             // vòng lặp kẹt > 5 s thì tự reset, lần sau in "[BOOT] lần trước vòng lặp TREO ..."
 }
 
 static uint32_t tMax[T_N], loopCount = 0, ctrlCount = 0, loopMaxUs = 0;
@@ -202,6 +219,7 @@ static void loopReport() {
 }
 
 void loop() {
+  loopAliveMs = (uint32_t)(esp_timer_get_time() / 1000);
   uint32_t loopT0 = micros();
   TIMED(T_PAD, BP32.update());
   TIMED(T_LOGIMU, { Log.pump(); imuStep(); handleSerial(); });
