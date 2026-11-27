@@ -51,6 +51,11 @@ const float WALL_SPEED_MMS = 180.0f;
 const uint32_t WALL_PUSH_MS = 300;
 const uint32_t LIFT_WAIT_TIMEOUT_MS = 6000;
 const uint32_t SHOOTER_WAIT_TIMEOUT_MS = 4000;
+// Giữ chỗ khi đứng chờ (WAIT / nâng lift / chờ bắn / gắp / hành động riêng): bị xe khác đẩy lệch thì tự chạy về
+const bool  HOLD_ENABLE = true;
+const float HOLD_START_MM = 20.0f, HOLD_START_RAD = 3.0f * DEG_TO_RAD;   // lệch quá mức này thì bắt đầu kéo về
+const float HOLD_STOP_MM = 8.0f,   HOLD_STOP_RAD = 1.5f * DEG_TO_RAD;    // về tới trong mức này thì đứng yên (trễ để không rung)
+const float HOLD_VMAX_MMS = 400.0f;
 const bool AUTO_RESET_POSE_ON_START = true;   // bấm chạy tự động => đặt toạ độ = điểm xuất phát
 
 // ============================ TRẠNG THÁI =============================
@@ -68,14 +73,15 @@ int32_t lastFollowEnd = -1;
 float iX = 0, iY = 0, iTh = 0, prevEx = 0, prevEy = 0;
 float wallTargetTh = 0;
 int asyncCustomId = -1; float asyncCustomParam = 0;
+bool holdActive = false;                    // đang kéo về chỗ cũ (giữ chỗ khi đứng chờ)
 
 bool runCustomAction(int id, float param, bool start);
 void beginStep();
 
-static char statusBuf[48];
+static char statusBuf[72];
 const char *autoStatus() {
   if (robotMode != RM_AUTO) return "";
-  snprintf(statusBuf, sizeof(statusBuf), "bước %d/%d %s idx=%.0f", autoStep, STEP_COUNT, PHASE_NAME[autoPhase], trajIdx);
+  snprintf(statusBuf, sizeof(statusBuf), "bước %d/%d %s%s idx=%.0f", autoStep, STEP_COUNT, PHASE_NAME[autoPhase], holdActive ? " (về chỗ)" : "", trajIdx);
   return statusBuf;
 }
 
@@ -131,6 +137,27 @@ void poseControl(float tx, float ty, float tth, float ffx, float ffy, float ffw,
   driveField(vx, vy, w);
 }
 
+float holdX = 0, holdY = 0, holdTh = 0;    // chỗ cần giữ khi đứng chờ
+uint32_t holdPushCount = 0;
+
+// Ghi nhớ chỗ đứng hiện tại làm điểm giữ
+void holdSetHere() { holdX = poseX; holdY = poseY; holdTh = poseTh; holdActive = false; }
+void holdSet(float x, float y, float th) { holdX = x; holdY = y; holdTh = th; holdActive = false; }
+
+// Gọi mỗi chu kỳ thay cho stopDrive() khi đứng chờ
+void holdPosition(float dt) {
+  if (!HOLD_ENABLE) { stopDrive(); return; }
+  float e = hypotf(holdX - poseX, holdY - poseY), eth = fabsf(wrapPi(holdTh - poseTh));
+  if (!holdActive && (e > HOLD_START_MM || eth > HOLD_START_RAD)) {
+    holdActive = true; holdPushCount++;
+    resetPid();
+    Log.printf("[AUTO] Bị đẩy lệch %.0f mm / %.1f° -> chạy về chỗ cũ\n", e, eth * RAD_TO_DEG);
+  }
+  if (holdActive && e < HOLD_STOP_MM && eth < HOLD_STOP_RAD) { holdActive = false; resetPid(); }
+  if (holdActive) poseControl(holdX, holdY, holdTh, 0, 0, 0, dt, HOLD_VMAX_MMS);
+  else stopDrive();
+}
+
 // ============================ ĐIỀU KHIỂN =============================
 void startAuto() {
   if (STEP_COUNT == 0) { Log.println("[AUTO] path_data.h trống"); return; }
@@ -143,6 +170,7 @@ void startAuto() {
   asyncCustomId = -1;
   autoStartMs = millis();
   resetPid();
+  holdSetHere();
   setPadColor(0, 0, 255);
   Log.printf("[AUTO] BẮT ĐẦU path \"%s\"\n", PATH_NAME);
   beginStep();
@@ -291,23 +319,23 @@ void autoUpdate(float dt) {
       const TrajPt &p = TRAJ[s.b];
       poseControl(p.x, p.y, p.th, 0, 0, 0, dt, APPROACH_VMAX_MMS);
       bool ok = hypotf(p.x - poseX, p.y - poseY) < END_TOL_MM && fabsf(wrapPi(p.th - poseTh)) < END_TOL_RAD;
-      if (ok || phaseMs() > END_TIMEOUT_MS) { stopDrive(); resetPid(); nextStep(); }
+      if (ok || phaseMs() > END_TIMEOUT_MS) { stopDrive(); resetPid(); holdSet(p.x, p.y, p.th); nextStep(); }
       break;
     }
     case AP_WAIT:
-      stopDrive();
+      holdPosition(dt);
       if (phaseMs() >= (uint32_t)s.p1) nextStep();
       break;
     case AP_LIFT:
-      stopDrive();
+      holdPosition(dt);
       if (!liftBusy() || phaseMs() > LIFT_WAIT_TIMEOUT_MS) nextStep();
       break;
     case AP_SHOOTER:
-      stopDrive();
+      holdPosition(dt);
       if (shooterAtSpeed || shooterFault || phaseMs() > SHOOTER_WAIT_TIMEOUT_MS) nextStep();
       break;
     case AP_TIMER:
-      stopDrive();
+      holdPosition(dt);
       if (phaseMs() >= timerMs) nextStep();
       break;
     case AP_WALL_DRIVE: {
@@ -337,12 +365,13 @@ void autoUpdate(float dt) {
         Log.printf("[AUTO] Ép tường: sửa dx=%.0f dy=%.0f dθ=%.1f°\n", poseX - oldX, poseY - oldY,
                       (poseTh - oldTh) * RAD_TO_DEG);
         resetPid();
+        holdSetHere();
         nextStep();
       }
       break;
     }
     case AP_CUSTOM:
-      stopDrive();
+      holdPosition(dt);
       if (runCustomAction(s.a, s.p1, false)) nextStep();
       break;
     default:
