@@ -90,8 +90,9 @@ struct PiStatus {                // 32 byte
   uint8_t cntClearRaw;           // tăng 1 mỗi lần ra lệnh xoá bộ đếm thô
   uint8_t bootId;                // số ngẫu nhiên mỗi lần ESP32#1 khởi động (Pi biết ESP32 vừa reset)
   float setX, setY, setYaw;      // toạ độ của lệnh đặt toạ độ mới nhất (mm, mm, rad)
-  uint8_t logLen;                // số byte log hợp lệ (0..12)
-  uint8_t log[12];               // một mảnh log (text UTF-8)
+  uint8_t logLen;                // số byte log hợp lệ (0..11)
+  uint8_t logSeq;                // tăng 1 mỗi mảnh log MỚI (Pi bỏ qua mảnh trùng khi đọc nhanh hơn ESP32 dựng gói)
+  uint8_t log[11];               // một mảnh log (text UTF-8)
   uint8_t crc;                   // crc8 của 31 byte đầu
 };
 #pragma pack(pop)

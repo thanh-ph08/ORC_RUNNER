@@ -722,6 +722,10 @@ class PiLink(threading.Thread):
         self.last_set = None
         self.last_cal = None
         self.last_clear = None
+        self.last_logseq = None
+        self.fresh = 0
+        self.dup = 0
+        self.stat_t = time.monotonic()
         self.warn_t = 0.0
 
     def _warn(self, msg):
@@ -763,9 +767,14 @@ class PiLink(threading.Thread):
         if c_clear != self.last_clear:
             self.last_clear = c_clear
             self.q.put(bytes([FLOW_CMD_CLEAR_RAW]))
-        n = st[18]
-        if 0 < n <= 12:
-            self.q.put(bytes([FLOW_CMD_LOG]) + st[19:19 + n])
+        n, seq = st[18], st[19]
+        if 0 < n <= 11:
+            if seq != self.last_logseq:                  # mảnh log mới
+                self.last_logseq = seq
+                self.q.put(bytes([FLOW_CMD_LOG]) + st[20:20 + n])
+                self.fresh += 1
+            else:
+                self.dup += 1                            # đọc nhanh hơn ESP32 dựng gói: bỏ mảnh trùng
 
     def run(self):
         while True:
@@ -778,6 +787,9 @@ class PiLink(threading.Thread):
                 rd = i2c_msg.read(LINK_ADDR, 32)
                 self.bus.i2c_rdwr(rd)
                 self.handle(bytes(rd))
+                if time.monotonic() - self.stat_t > 10.0:
+                    self.stat_t = time.monotonic()
+                    print(f"[LINK] 10 s qua: đọc đúng {self.ok} lần, sai {self.bad}, lỗi bus {self.err}; mảnh log mới {self.fresh}, trùng {self.dup}")
             except OSError as e:
                 self.err += 1
                 self._warn(f"[LINK] Không nói chuyện được với ESP32#1 (0x{LINK_ADDR:02X} trên bus {LINK_BUS}): {e} "

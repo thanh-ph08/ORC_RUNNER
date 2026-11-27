@@ -61,7 +61,8 @@ static void plOnReceive(int n) {
 // Gói trạng thái dựng SẴN ở vòng lặp chính (odometryUpdate), callback chỉ chép ra — làm nặng trong callback
 // thì FIFO phát của ESP32 cạn trước khi kịp nạp (Pi chỉ nhận được byte đầu, phần còn lại 0xFF).
 static PiStatus plStBuf;
-static volatile bool plStConsumed = true;           // true = gói đã được Pi đọc, cần dựng gói mới
+static volatile bool plStConsumed = true;
+static uint8_t plLogSeq = 0;           // true = gói đã được Pi đọc, cần dựng gói mới
 
 static void plBuildStatus() {
   PiStatus st;
@@ -72,6 +73,8 @@ static void plBuildStatus() {
   st.bootId = plBootId;
   st.setX = plSetX; st.setY = plSetY; st.setYaw = plSetYaw;
   st.logLen = (uint8_t)Log.take(st.log, sizeof(st.log));
+  if (st.logLen) plLogSeq++;
+  st.logSeq = plLogSeq;
   st.crc = orcCrc8((const uint8_t *)&st, sizeof(st) - 1);
   portENTER_CRITICAL(&plMux);
   plStBuf = st;
