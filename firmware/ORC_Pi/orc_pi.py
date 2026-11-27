@@ -50,7 +50,8 @@ SERIAL_PORT = "/dev/serial0"        # chỉ dùng khi LINK = "uart"
 SERIAL_BAUD = 921600
 IMU_BUS = 1                         # bus I2C phần cứng của Pi (GPIO2 = SDA chân 3, GPIO3 = SCL chân 5); đổi 3 nếu tách bus riêng bằng dtoverlay
 WEB_PORT = 8080                    # trang giám sát http://<tên-máy>.local:8080 ; 0 = tắt
-IMU_TYPE = "mpu6050"               # "mpu6050"/"bmi160" = Pi tự đọc I2C; "esp32" = ESP32#1 đọc rồi gửi qua UART (cần đặt IMU_READ_ON_ESP32 1 trong config.h)
+IMU_TYPE = "esp32"                 # "esp32" = ESP32#1 đọc MPU6050 rồi đưa sang Pi (IMU_READ_ON_ESP32 1, mặc định). "mpu6050"/"bmi160" = Pi tự đọc I2C
+                                   #   — CHỈ khi IMU nằm trên bus riêng của Pi; chung bus với ESP32#1 thì 2 master tranh nhau => lỗi, ESP32#1 treo 1 s
 MPU6050_ADDR = 0x68                # 0x69 nếu chân AD0 nối 3V3
 BMI160_ADDR = 0x69                 # 0x68 nếu SDO nối GND
 
@@ -90,6 +91,8 @@ FLOW_CMD_IMU = 0x22                # ESP32#1 -> Pi: mẫu MPU6050 thô
 PILINK_W_POSE = 0xA7              # Pi ghi vào ESP32#1: 0xA7 + PosePacket(40)   (khớp orc_protocol.h)
 PILINK_STATUS_MAGIC = 0xA8        # Pi đọc từ ESP32#1: PiStatus 32 byte
 PILINK_F_SETPOSE = 0x01
+PILINK_W_IMU = 0xA9               # Pi ghi 1 byte 0xA9 rồi đọc ImuLink 32 byte
+PILINK_IMU_MAGIC = 0xAA
 POSE_FLAG_IMU_OK = 0x01
 POSE_FLAG_MOUSE_OK = 0x02
 POSE_FLAG_CALIBRATING = 0x04
@@ -299,6 +302,9 @@ class EspImu:
         self.temp = float("nan")
         self.rx_t = 0.0         # lần cuối nhận mẫu
         self.n_rx = 0
+        self.ts_mask = 0xFFFFFFFF
+        self.link_seq = None
+        self.lost = 0           # mẫu bị lỡ trên liên kết I2C
 
     def begin(self) -> bool:
         return True
@@ -317,6 +323,29 @@ class EspImu:
         self.n_rx += 1
         self.q.append((ts, v))
 
+    def push_link(self, p: bytes):
+        """Gói ImuLink 32 byte (đã kiểm CRC): seq | stat | ts0 ts1 (u16 µs) | 2 mẫu × 6 int16"""
+        self.ts_mask = 0xFFFF
+        seq, stat = p[1], p[2]
+        ts0, ts1 = struct.unpack("<2H", p[3:7])
+        s0 = struct.unpack("<6h", p[7:19])
+        s1 = struct.unpack("<6h", p[19:31])
+        self.resets = stat & 0x7F
+        if self.link_seq is None:
+            todo = [(ts1, s1)]
+        else:
+            d = (seq - self.link_seq) & 0xFF
+            if d == 0 or d >= 128:              # gói đã nhận / gói cũ trả trễ
+                return
+            todo = [(ts1, s1)] if d == 1 else [(ts0, s0), (ts1, s1)]
+            if d > 2:
+                self.lost += d - 2
+        self.link_seq = seq
+        self.rx_t = time.monotonic()
+        for ts, v in todo:
+            self.n_rx += 1
+            self.q.append((ts, v))
+
     def age(self):
         return None if self.n_rx == 0 else time.monotonic() - self.rx_t
 
@@ -329,7 +358,7 @@ class EspImu:
             return None
         ts, v = self.q.popleft()
         if self.last_ts is not None:
-            dt = ((ts - self.last_ts) & 0xFFFFFFFF) * 1e-6
+            dt = ((ts - self.last_ts) & self.ts_mask) * 1e-6
             self.last_dt = dt if 0.0005 < dt < 0.05 else 0.01
         self.last_ts = ts
         g, a = self.GYRO_LSB, self.ACC_LSB
@@ -744,6 +773,12 @@ class PiLink(threading.Thread):
         return True
 
     def handle(self, st: bytes):
+        if len(st) == 32 and st[0] == PILINK_IMU_MAGIC and crc8(st[:31]) == st[31]:
+            if isinstance(self.bot.imu, EspImu):
+                self.bot.imu.push_link(st)
+            return
+        if len(st) == 32 and st[0] == 0 and not any(st):     # ESP32#1 chưa có mẫu IMU nào
+            return
         if len(st) != 32 or st[0] != PILINK_STATUS_MAGIC or crc8(st[:31]) != st[31]:
             self.bad += 1
             self._warn(f"[LINK] ESP32#1 trả dữ liệu sai (magic/CRC), {self.bad} lần — kiểm tra dây GPIO5/6 <-> GPIO18/19, trở kéo lên, GND")
@@ -795,6 +830,11 @@ class PiLink(threading.Thread):
                 rd = i2c_msg.read(LINK_ADDR, 32)
                 self.bus.i2c_rdwr(rd)
                 self.handle(bytes(rd))
+                if isinstance(self.bot.imu, EspImu):       # lấy 2 mẫu IMU mới nhất (ESP32#1 đọc 200 Hz)
+                    self.bus.i2c_rdwr(i2c_msg.write(LINK_ADDR, bytes([PILINK_W_IMU])))
+                    rd = i2c_msg.read(LINK_ADDR, 32)
+                    self.bus.i2c_rdwr(rd)
+                    self.handle(bytes(rd))
                 if self.ok and time.monotonic() - self.fresh_t > 4.0:
                     self._warn("[LINK] ESP32#1 vẫn trả lời I2C nhưng gói KHÔNG ĐỔI >4 s (không có log mới): "
                                "vòng lặp ESP32#1 có thể đang TREO — xem Serial Monitor, bấm EN để reset")

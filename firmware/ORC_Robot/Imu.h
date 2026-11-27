@@ -1,6 +1,7 @@
 /*
- * Imu.h — ESP32#1 đọc MPU6050 (0x68, nằm sẵn trên Control Hub, chung bus I2C với hub servo) rồi gửi mẫu thô sang Raspberry Pi
- *         qua UART. Pi KHÔNG đọc I2C nữa, nên không còn hai master tranh nhau trên một bus.
+ * Imu.h — ESP32#1 đọc MPU6050 (0x68, nằm sẵn trên Control Hub, chung bus I2C với hub servo + ESP32#2) rồi đưa mẫu thô cho Raspberry Pi.
+ *         Pi KHÔNG đụng bus đó nữa (IMU_TYPE = "esp32"), nên không còn hai master tranh nhau trên một bus.
+ *         PI_LINK_I2C 1: mẫu nằm trong gói ImuLink (2 mẫu mới nhất) Pi đọc qua bus I2C riêng. PI_LINK_I2C 0: gửi khung UART như dưới.
  *
  * Khung gửi (FLOW_CMD_IMU 0x22, 22 byte): u32 micros | gx gy gz ax ay az (int16, đã đổi sang little-endian) | int16 temp thô | u8 số lần reset chip | u16 số lỗi I2C
  * Thang đo: gyro ±1000 dps (32.8 LSB/dps), accel ±4 g (8192 LSB/g), giống bản trước trên Pi.
@@ -16,7 +17,7 @@ static void rpiSend(const uint8_t *payload, uint8_t len);   // Odometry.h
 #define IMU_ADDR 0x68
 #endif
 #ifndef IMU_PERIOD_US
-#define IMU_PERIOD_US 10000        // 100 Hz
+#define IMU_PERIOD_US 5000         // 200 Hz
 #endif
 
 struct ImuState {
@@ -44,7 +45,7 @@ static bool imuReadRegs(uint8_t reg, uint8_t *buf, uint8_t n) {
 }
 
 bool imuBegin() {
-#if !IMU_READ_ON_ESP32 || PI_LINK_I2C
+#if !IMU_READ_ON_ESP32
   return false;                              // Pi tự đọc IMU
 #endif
   uint8_t who;
@@ -61,7 +62,7 @@ bool imuBegin() {
   ok &= imuWrite(0x1C, 0x08);                    // accel ±4 g
   delay(100);
   imuS.ok = ok;
-  if (ok) Log.println("[IMU] MPU6050 OK (đọc ở ESP32#1, gửi sang Pi qua UART)");
+  if (ok) Log.println("[IMU] MPU6050 OK (ESP32#1 đọc, Pi lấy qua liên kết)");
   return ok;
 }
 
@@ -79,13 +80,15 @@ static void imuRecover() {
 
 // Gọi trong loop() thật thường xuyên; tự giữ nhịp IMU_PERIOD_US.
 void imuStep() {
-#if !IMU_READ_ON_ESP32 || PI_LINK_I2C
+#if !IMU_READ_ON_ESP32
   return;
 #endif
   uint32_t now = micros();
   if (now - imuS.lastUs < IMU_PERIOD_US) return;
   imuS.lastUs = now;
+#if !PI_LINK_I2C
   if (Serial2.availableForWrite() < 28) return;                     // đường UART đang đầy: bỏ mẫu này
+#endif
   if (!imuS.ok) {                                                  // chưa có chip: thử lại mỗi 1 s
     if (millis() - imuS.lastRecoverMs >= 1000) { imuS.lastRecoverMs = millis(); imuBegin(); }
     return;
@@ -111,6 +114,19 @@ void imuStep() {
   // MPU6050: big-endian, thứ tự ax ay az temp gx gy gz -> gửi gx gy gz ax ay az temp (little-endian)
   auto be = [&](uint8_t i) { return (int16_t)((b[i] << 8) | b[i + 1]); };
   int16_t v[7] = {be(8), be(10), be(12), be(0), be(2), be(4), be(6)};
+#if PI_LINK_I2C
+  static ImuLink m = {};
+  static bool havePrev = false;
+  static uint8_t seq = 0;
+  m.magic = PILINK_IMU_MAGIC;
+  m.ts[0] = m.ts[1]; memcpy(m.s[0], m.s[1], sizeof(m.s[1]));      // mẫu cũ dời sang ô 0
+  m.ts[1] = (uint16_t)now; memcpy(m.s[1], v, sizeof(m.s[1]));
+  m.seq = ++seq;
+  m.stat = 0x80 | (imuS.resets & 0x7F);
+  m.crc = orcCrc8((const uint8_t *)&m, sizeof(m) - 1);
+  if (havePrev) piLinkSetImu(m);
+  havePrev = true;
+#else
   uint8_t f[22];
   f[0] = FLOW_CMD_IMU;
   memcpy(f + 1, &now, 4);
@@ -118,5 +134,6 @@ void imuStep() {
   f[19] = imuS.resets;
   memcpy(f + 20, &imuS.err, 2);
   rpiSend(f, sizeof(f));
+#endif
   imuS.sent++;
 }

@@ -80,6 +80,18 @@ static inline uint8_t orcCrc8(const uint8_t *d, uint8_t n) {   // CRC-8, đa th�
 #define ORC_PILINK_ADDR     0x43
 #define PILINK_W_POSE       0xA7
 #define PILINK_STATUS_MAGIC 0xA8
+#define PILINK_W_IMU        0xA9   // Pi ghi 1 byte 0xA9 rồi đọc 32 byte ImuLink (2 mẫu IMU mới nhất)
+#define PILINK_IMU_MAGIC    0xAA
+#pragma pack(push, 1)
+struct ImuLink {                 // 32 byte — ESP32#1 đọc MPU6050 (bus của Control Hub) ~200 Hz, Pi lấy 2 mẫu mới nhất mỗi lần đọc
+  uint8_t magic;                 // PILINK_IMU_MAGIC
+  uint8_t seq;                   // số thứ tự (8 bit) của mẫu s[1]; s[0] là mẫu ngay trước nó (seq - 1)
+  uint8_t stat;                  // bit7 = IMU đang OK, bit0..6 = số lần phải khởi tạo lại chip
+  uint16_t ts[2];                // micros() & 0xFFFF của từng mẫu
+  int16_t s[2][6];               // gx gy gz ax ay az thô (±1000 dps: 32.8 LSB/dps, ±4 g: 8192 LSB/g)
+  uint8_t crc;                   // crc8 của 31 byte đầu
+};
+#pragma pack(pop)
 #define PILINK_F_SETPOSE    0x01   // đang chờ Pi xác nhận lệnh đặt toạ độ (setX, setY, setYaw)
 #pragma pack(push, 1)
 struct PiStatus {                // 32 byte

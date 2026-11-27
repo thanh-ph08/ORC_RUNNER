@@ -41,6 +41,8 @@ static portMUX_TYPE plMux = portMUX_INITIALIZER_UNLOCKED;
 uint32_t piLinkReads()  { return plReads; }
 uint32_t piLinkWrites() { return plWrites; }
 
+static volatile uint8_t plWant = 0;                // 0 = lần đọc tới trả PiStatus, 1 = trả ImuLink
+static uint8_t plImuBuf[sizeof(ImuLink)];           // gói IMU mới nhất (Imu.h điền), mặc định magic = 0 => Pi bỏ qua
 static volatile uint8_t plLogAck = 0;              // logSeq mà Pi báo đã nhận (gửi kèm mỗi lần Pi ghi)
 // Callback I2C (chạy trong luồng/ISR của driver): KHÔNG gọi Log, delay hay Serial ở đây.
 static void plOnReceive(int n) {
@@ -51,6 +53,8 @@ static void plOnReceive(int n) {
     if (k < (int)sizeof(tmp)) tmp[k++] = b;
   }
   plWrites++;
+  if (k >= 1 && tmp[0] == PILINK_W_IMU) { plWant = 1; return; }
+  plWant = 0;
   if (k == (int)sizeof(tmp) && tmp[0] == PILINK_W_POSE) {
     portENTER_CRITICAL_SAFE(&plMux);
     memcpy(plRxBuf, tmp + 1, sizeof(PosePacket));
@@ -94,8 +98,8 @@ static void plBuildStatus() {
 static void plOnRequest() {
   uint8_t out[sizeof(PiStatus)];
   portENTER_CRITICAL_SAFE(&plMux);
-  memcpy(out, &plStBuf, sizeof(out));
-  plStConsumed = true;
+  if (plWant == 1) memcpy(out, plImuBuf, sizeof(out));
+  else { memcpy(out, &plStBuf, sizeof(out)); plStConsumed = true; }
   portEXIT_CRITICAL_SAFE(&plMux);
   Wire1.write(out, sizeof(out));
   plReads++;
@@ -110,6 +114,12 @@ void odometryBegin() {
   Log.printf("[LINK] I2C slave 0x%02X (Pi master) trên GPIO%d/GPIO%d: %s\n", ORC_PILINK_ADDR, PILINK_SDA, PILINK_SCL, ok ? "OK" : "LỖI khởi tạo");
 }
 
+// Imu.h gọi khi có gói IMU mới
+static void piLinkSetImu(const ImuLink &m) {
+  portENTER_CRITICAL(&plMux);
+  memcpy(plImuBuf, &m, sizeof(m));
+  portEXIT_CRITICAL(&plMux);
+}
 static void rpiSend(const uint8_t *, uint8_t) {}     // không dùng ở chế độ I2C (giữ cho Imu.h / Log.h)
 #else
 uint32_t piLinkReads()  { return 0; }
@@ -120,6 +130,7 @@ void odometryBegin() {
   Serial2.begin(RPI_BAUD, SERIAL_8N1, RPI_RX_PIN, RPI_TX_PIN);
 }
 
+static void piLinkSetImu(const ImuLink &) {}
 static void rpiSend(const uint8_t *payload, uint8_t len) {
   uint8_t head[3] = {ORC_CMD_SYNC0, ORC_CMD_SYNC1, len};
   Serial2.write(head, 3);

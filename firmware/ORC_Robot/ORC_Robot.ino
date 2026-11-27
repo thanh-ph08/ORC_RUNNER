@@ -173,8 +173,9 @@ void setup() {
   Wire.begin(I2C_SDA, I2C_SCL, I2C_CLOCK);
   Wire.setTimeOut(15);                      // ms — slave treo thì không kẹt cả vòng điều khiển
   odometryBegin();                          // liên kết tới Raspberry Pi (I2C slave trên Wire1, hoặc UART2 nếu PI_LINK_I2C 0)
-  servosBegin();                            // hub.begin() gọi lại Wire.begin(), nên đặt lại clock sau đó
+  servosBegin();                            // hub.begin() gọi lại Wire.begin(), nên đặt lại clock + timeout sau đó
   Wire.setClock(I2C_CLOCK);
+  Wire.setTimeOut(15);
   imuBegin();                               // MPU6050 trên Control Hub: ESP32#1 là master duy nhất của bus
   touchBegin();
   shooterBegin();
