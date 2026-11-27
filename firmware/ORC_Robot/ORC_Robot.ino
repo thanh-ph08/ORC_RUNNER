@@ -85,7 +85,7 @@ static void handleSerial() {
 
 static void telemetry() {
   static uint32_t last = 0;
-  if (!telemetryOn || millis() - last < 250) return;
+  if (!telemetryOn || millis() - last < 1000) return;   // 1 s/dòng: log qua I2C tới Pi không bị tràn
   last = millis();
   Log.printf("x=%6.0f y=%6.0f th=%6.1f° | shoot %s %4.0f/%4.0f rpm%s | lift %5.1f→%5.1f mm%s | gắp:%s dẫn:%d | lỗi gói Pi=%lu, I2C enc=%lu | %s %s\n",
                 poseX, poseY, poseTh * RAD_TO_DEG,
@@ -174,11 +174,31 @@ void setup() {
   Log.println("Ghép tay PS4: giữ Share + PS. Tay PS5: giữ Create + PS.");
 }
 
+// ---- Đo thời gian từng phần của vòng lặp: in "[LOOP] ..." mỗi 2 s để biết phần nào làm chậm ----
+enum { T_PAD, T_LOGIMU, T_ODO, T_ENC, T_CTRL, T_SERVO, T_TELE, T_N };
+static const char *T_NAME[T_N] = {"BP32", "log/imu/serial", "pi-link", "encoder(ESP32#2)", "điều khiển", "servo(hub)", "telemetry"};
+static uint32_t tMax[T_N], loopCount = 0, ctrlCount = 0, loopMaxUs = 0;
+#define TIMED(id, code) do { uint32_t _t0 = micros(); code; uint32_t _d = micros() - _t0; if (_d > tMax[id]) tMax[id] = _d; } while (0)
+
+static void loopReport() {
+  static uint32_t last = 0;
+  if (millis() - last < 2000) return;
+  float sec = (millis() - last) / 1000.0f;
+  last = millis();
+  int worst = 0;
+  for (int i = 1; i < T_N; i++) if (tMax[i] > tMax[worst]) worst = i;
+  Log.printf("[LOOP] %lu vòng/s, %lu nhịp điều khiển/s, vòng chậm nhất %.1f ms | chậm nhất: %s %.1f ms (enc %.1f, servo %.1f, BP32 %.1f) | I2C Pi: đọc %lu ghi %lu\n",
+             (unsigned long)(loopCount / sec), (unsigned long)(ctrlCount / sec), loopMaxUs / 1000.0f,
+             T_NAME[worst], tMax[worst] / 1000.0f, tMax[T_ENC] / 1000.0f, tMax[T_SERVO] / 1000.0f, tMax[T_PAD] / 1000.0f,
+             (unsigned long)piLinkReads(), (unsigned long)piLinkWrites());
+  loopCount = ctrlCount = loopMaxUs = 0;
+  for (int i = 0; i < T_N; i++) tMax[i] = 0;
+}
+
 void loop() {
-  BP32.update();
-  Log.pump();
-  imuStep();
-  handleSerial();
+  uint32_t loopT0 = micros();
+  TIMED(T_PAD, BP32.update());
+  TIMED(T_LOGIMU, { Log.pump(); imuStep(); handleSerial(); });
 
   static uint32_t lastCtrl = micros();
   uint32_t now = micros();
@@ -186,15 +206,22 @@ void loop() {
     float dt = (now - lastCtrl) * 1e-6f;
     lastCtrl = now;
     if (dt > 0.05f) dt = 0.05f;
+    ctrlCount++;
 
-    odometryUpdate();
-    encodersUpdate();
-    padRead();
-    if (robotMode == RM_AUTO) autoUpdate(dt);
-    else manualUpdate(dt);
-    shooterUpdate(dt);
-    liftUpdate(dt);
-    servosUpdate();
+    TIMED(T_ODO, odometryUpdate());
+    TIMED(T_ENC, encodersUpdate());
+    TIMED(T_CTRL, {
+      padRead();
+      if (robotMode == RM_AUTO) autoUpdate(dt);
+      else manualUpdate(dt);
+      shooterUpdate(dt);
+      liftUpdate(dt);
+    });
+    TIMED(T_SERVO, servosUpdate());
   }
-  telemetry();
+  TIMED(T_TELE, telemetry());
+  loopReport();
+  loopCount++;
+  uint32_t d = micros() - loopT0;
+  if (d > loopMaxUs) loopMaxUs = d;
 }
