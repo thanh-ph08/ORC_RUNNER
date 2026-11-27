@@ -16,6 +16,8 @@ static const uint32_t BAUD = 921600;
 static const int LED_PIN = 2;                 // D2 (đèn trên board ESP32 DevKit thường ở GPIO2): chớp 1 lần mỗi khi nhận ĐÚNG 1 khung từ Pi
 static const uint32_t LED_MS = 40;            // thời gian sáng mỗi lần chớp
 static uint32_t ledOffAt = 0;
+static volatile uint32_t rxEdges = 0;          // số lần chân RX (GPIO34) đổi từ cao xuống thấp: >0 nghĩa là CÓ tín hiệu điện từ dây Pi tới, dù UART có giải mã được hay không
+static void IRAM_ATTR onRxEdge() { rxEdges++; }
 
 static uint8_t crc8(const uint8_t *d, size_t n) {          // CRC-8 đa thức 0x07 (giống orc_protocol.h)
   uint8_t c = 0;
@@ -70,6 +72,7 @@ void setup() {
   Serial.println("\n=== ORC_UartTest (ESP32) ===");
   Serial2.setRxBufferSize(1024);
   Serial2.begin(BAUD, SERIAL_8N1, RX_PIN, TX_PIN);
+  attachInterrupt(digitalPinToInterrupt(RX_PIN), onRxEdge, FALLING);
   Serial.printf("UART2: RX=GPIO%d (nhận từ Pi), TX=GPIO%d (gửi sang Pi), %lu baud\n", RX_PIN, TX_PIN, (unsigned long)BAUD);
 }
 
@@ -81,11 +84,14 @@ void loop() {
   if (now - tTx >= 100) { tTx = now; sendFrame(); }
   if (now - tPrint >= 500) {
     tPrint = now;
-    if (rxOk == 0 && rxBytes == 0)
-      Serial.printf("[ESP->Pi] đã gửi %lu khung | [Pi->ESP] CHƯA nhận byte nào (kiểm tra dây Pi chân 8 -> GPIO34, GND, và chạy uart_link.py trên Pi)\n", (unsigned long)txFrames);
-    else
-      Serial.printf("[ESP->Pi] đã gửi %lu khung | [Pi->ESP] %lu khung đúng, %lu sai, %lu byte, seq cuối %u, cách đây %lu ms\n",
-                    (unsigned long)txFrames, (unsigned long)rxOk, (unsigned long)rxBad, (unsigned long)rxBytes, lastPiSeq,
-                    (unsigned long)(lastPiMs ? now - lastPiMs : 0));
+    Serial.printf("[ESP->Pi] gửi %lu khung | [chân GPIO%d] mức=%d, cạnh xuống=%lu | [Pi->ESP] %lu byte, %lu khung đúng, %lu sai, seq cuối %u, cách đây %lu ms\n",
+                  (unsigned long)txFrames, RX_PIN, digitalRead(RX_PIN), (unsigned long)rxEdges, (unsigned long)rxBytes,
+                  (unsigned long)rxOk, (unsigned long)rxBad, lastPiSeq, (unsigned long)(lastPiMs ? now - lastPiMs : 0));
+    if (rxEdges == 0)
+      Serial.println("   ! chân RX KHÔNG thấy tín hiệu nào: dây Pi chân 8 -> ESP32 GPIO34 chưa tới/đứt/đấu nhầm, hoặc thiếu GND chung, hoặc uart_link.py chưa chạy");
+    else if (rxBytes == 0)
+      Serial.println("   ! có tín hiệu trên chân RX nhưng UART không nhận byte: kiểm tra tốc độ (921600) hoặc nhiễu");
+    else if (rxOk == 0)
+      Serial.println("   ! nhận byte nhưng không ra khung đúng: sai giao thức/CRC hoặc nhiễu");
   }
 }
