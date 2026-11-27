@@ -1,17 +1,18 @@
 /*
  * ORC_Encoder.ino — ESP32#2 (I2C SLAVE 0x42): đọc 2 encoder quadrature, gửi về ESP32#1
  *
- *   Encoder 1: bánh bắn banh    Encoder 2: nâng hạ
- *   Encoder "Rotary Encoder 100 xung 5VDC" (thegioiic IC4599): 100 xung/vòng, 2 kênh A/B lệch 90°.
- *   Dây: ĐỎ = nguồn, ĐEN = GND, 2 dây còn lại = A, B (collector hở).
+ *   Encoder 1: bánh bắn banh — encoder Hall của động cơ GA25, 2 kênh A/B (GPIO8, GPIO9), đọc x4.
+ *   Encoder 2: nâng hạ — đĩa có rãnh trên trục NEMA 17 + cảm biến khe LM393, CHỈ 1 KÊNH (chân D0 -> GPIO7).
+ *              Một kênh không biết chiều: ESP32#2 chỉ đếm số cạnh (luôn tăng), ESP32#1 lấy chiều theo lệnh motor lift.
  *
- *   !! CẤP NGUỒN ENCODER 3.3V (datasheet cho phép 5V hoặc 3.3V). Nếu cấp 5V thì tín hiệu ra 5V,
- *   !! vượt mức chịu của chân ESP32 (3.3V). Chân A/B dùng INPUT_PULLUP nội; nếu xung yếu/nhiễu thì thêm trở 10k kéo lên 3.3V.
+ *   !! CẤP NGUỒN CẢ HAI CẢM BIẾN 3.3V. Cấp 5V thì tín hiệu ra 5V, ESP32-S3 không chịu được.
+ *   !! Chân dùng INPUT_PULLUP nội; nếu xung yếu/nhiễu thì thêm trở 10k kéo lên 3.3V.
  *
  * Board: "ESP32S3 Dev Module" (OhStem ORC Control Hub rev D). Tools → USB CDC On Boot: Enabled để Serial Monitor hoạt động qua cổng USB-C.
  * Chân I2C: SDA 11, SCL 12 (nối chung bus với ESP32#1, RPi, hub Ohstem; cần trở kéo lên 3.3V trên bus).
  *
- * Đọc x4 (cả 2 cạnh của cả 2 kênh) => 400 count / vòng. ESP32#2 chỉ đếm + tính tốc độ (count/s);
+ * Bắn: x4 => 4 × số xung/vòng của encoder (GA25 thường 11 xung/vòng ở trục motor, nhân tỉ số hộp số nếu đo ở trục ra).
+ * Lift: đếm cả cạnh lên và xuống => 2 count mỗi rãnh của đĩa. ESP32#2 chỉ đếm + tính tốc độ (count/s);
  * đổi sang rpm / mm do ESP32#1 làm (config.h).
  */
 #include <Arduino.h>
@@ -22,8 +23,9 @@
 // (Chân tạm — sửa lại cho đúng dây của bạn.)
 // Board: OhStem ORC Control Hub rev D (ESP32-S3-WROOM). Trên S3, GPIO26–32 là flash, không dùng được.
 // Chân dưới đây là chân Grove của board: A0=GPIO1, A1=GPIO2, D3=GPIO6, D4=GPIO7 (đối chiếu chữ in trên board).
-const int SHOOTER_PIN_A = 1, SHOOTER_PIN_B = 2;     // A0, A1
-const int LIFT_PIN_A    = 6, LIFT_PIN_B    = 7;     // D3, D4
+const int SHOOTER_PIN_A = 8, SHOOTER_PIN_B = 9;     // encoder GA25: A -> GPIO8, B -> GPIO9
+const int LIFT_PIN      = 7;                        // LM393 D0 -> GPIO7 (1 kênh)
+const uint32_t LIFT_MIN_EDGE_US = 150;              // bỏ cạnh đến sớm hơn mức này (LM393 rung ở mép rãnh); tăng nếu đếm thừa
 const int I2C_SDA = 11, I2C_SCL = 12;   // ESP32#2: SDA = GPIO11, SCL = GPIO12 (ESP32#1 vẫn dùng 21/22, mỗi board chọn chân riêng)
 const uint32_t I2C_CLOCK = 100000;     // khớp ESP32#1
 
@@ -37,7 +39,10 @@ struct Quad {
   volatile uint8_t state;
 };
 Quad shooterEnc = {SHOOTER_PIN_A, SHOOTER_PIN_B, 0, 0};
-Quad liftEnc    = {LIFT_PIN_A, LIFT_PIN_B, 0, 0};
+
+// Lift: 1 kênh, đếm mọi cạnh (lên + xuống), bỏ cạnh rung
+struct Pulse { int pin; volatile int32_t count; volatile uint32_t lastUs; };
+Pulse liftEnc = {LIFT_PIN, 0, 0};
 
 // Bảng trạng thái x4: chỉ số = (trạng thái cũ << 2) | trạng thái mới; giá trị -1/0/+1
 static const int8_t QTAB[16] = {0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
@@ -55,6 +60,19 @@ void quadBegin(Quad &q) {
   q.state = (uint8_t)((digitalRead(q.pinA) << 1) | digitalRead(q.pinB));
   attachInterruptArg(digitalPinToInterrupt(q.pinA), quadIsr, &q, CHANGE);
   attachInterruptArg(digitalPinToInterrupt(q.pinB), quadIsr, &q, CHANGE);
+}
+
+void IRAM_ATTR pulseIsr(void *arg) {
+  Pulse *p = (Pulse *)arg;
+  uint32_t t = micros();
+  if (t - p->lastUs < LIFT_MIN_EDGE_US) return;
+  p->lastUs = t;
+  p->count++;
+}
+
+void pulseBegin(Pulse &p) {
+  pinMode(p.pin, INPUT_PULLUP);
+  attachInterruptArg(digitalPinToInterrupt(p.pin), pulseIsr, &p, CHANGE);
 }
 
 // ============================ I2C SLAVE ============================
@@ -83,7 +101,7 @@ void onReceiveCb(int n) {
 void setup() {
   Serial.begin(115200);
   quadBegin(shooterEnc);
-  quadBegin(liftEnc);
+  pulseBegin(liftEnc);
 
 #if defined(CONFIG_IDF_TARGET_ESP32)
   // ESP32 thường: GPIO6–11 nối với flash của chip, dùng làm I2C sẽ làm board treo/khởi động lại liên tục.
@@ -129,8 +147,8 @@ void loop() {
   static uint32_t lastPrint = 0;
   if (now - lastPrint >= 500) {
     lastPrint = now;
-    Serial.printf("shooter=%ld (%ld cps)  lift=%ld (%ld cps) | I2C: đọc=%lu ghi=%lu\n", (long)shooterEnc.count,
-                  (long)lroundf(cpsShooter), (long)liftEnc.count, (long)lroundf(cpsLift),
+    Serial.printf("shooter=%ld (%ld cps)  lift=%ld cạnh (%ld cps, chân %d) | I2C: đọc=%lu ghi=%lu\n", (long)shooterEnc.count,
+                  (long)lroundf(cpsShooter), (long)liftEnc.count, (long)lroundf(cpsLift), digitalRead(LIFT_PIN),
                   (unsigned long)reqCount, (unsigned long)rcvCount);
   }
 }

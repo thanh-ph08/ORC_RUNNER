@@ -72,8 +72,8 @@ static void handleSerial() {
       case 'g': Log.printf("[CAL] Gyro cộng dồn: %.1f độ\n", gyroAccumDeg); break;
       case 'z': flowClearRaw(); Log.println("[CAL] Đã xoá bộ đếm"); break;
       case 'c': flowCalibrateGyro(); break;
-      case 'e': Log.printf("[ENC] shooter=%ld (%.0f rpm)  lift=%ld count (%.1f mm)\n", (long)encShooterCount, shooterRpm,
-                              (long)encLiftCount, liftPosMM); break;
+      case 'e': Log.printf("[ENC] shooter=%ld (%.0f rpm)  lift=%ld count (%.1f mm, ESP32#2 đếm %ld cạnh)\n", (long)encShooterCount, shooterRpm,
+                              (long)(liftCount - liftZeroCounts), liftPosMM, (long)encLiftCount); break;
       case 'l': liftZeroHere(); break;
       case '+': shooterAdjust(+SHOOTER_RPM_STEP); Log.printf("[SHOOT] %.0f rpm\n", shooterTargetRpm); break;
       case '-': shooterAdjust(-SHOOTER_RPM_STEP); Log.printf("[SHOOT] %.0f rpm\n", shooterTargetRpm); break;

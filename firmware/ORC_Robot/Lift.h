@@ -3,6 +3,7 @@
  *
  * Vị trí 0 mm = vị trí lúc cấp điện (đáy). PID có tích phân + PWM nuôi (LIFT_HOLD_PWM) để GIỮ vị trí chống trọng lực.
  * Thả D-pad thì đích = vị trí hiện tại => lift đứng giữ yên.
+ * Encoder 1 kênh (LM393, LIFT_ENC_SINGLE 1): chiều lấy theo lệnh motor, nên PWM nuôi LIFT_HOLD_PWM phải đủ giữ lift không tự trôi xuống.
  * Bảo vệ: PWM lớn mà không nhúc nhích quá LIFT_STALL_MS, hoặc mất encoder => ngắt motor (liftFault) cho tới khi có lệnh mới.
  */
 #pragma once
@@ -20,13 +21,34 @@ static int32_t liftZeroCounts = 0;
 static Pid liftPid;
 static uint32_t liftStallSince = 0;
 
+// Số đếm có dấu của lift. Encoder 2 kênh: lấy thẳng từ ESP32#2. Encoder 1 kênh (LIFT_ENC_SINGLE): ESP32#2 chỉ đếm cạnh
+// (luôn tăng), nên cộng/trừ theo chiều của lệnh motor gần nhất khác 0.
+int32_t liftCount = 0;
+static int32_t liftRawLast = 0;
+static bool liftRawInit = false;
+static int liftDirSign = 1;          // +1 = đang lệnh đi lên, -1 = đi xuống
+
+static void liftTrackCount() {
+#if LIFT_ENC_SINGLE
+  int32_t raw = encLiftCount;
+  if (!liftRawInit) { liftRawLast = raw; liftRawInit = true; }
+  int32_t d = raw - liftRawLast;
+  liftRawLast = raw;
+  if (d < 0 || d > 2000) d = 0;      // ESP32#2 vừa khởi động lại / số vô lý: bỏ qua, không làm nhảy vị trí
+  liftCount += liftDirSign * d;
+#else
+  liftCount = LIFT_ENC_SIGN * encLiftCount;
+#endif
+}
+
 void liftBegin() {
   liftPid.set(LIFT_KP, LIFT_KI, 0.0f, LIFT_I_MAX_PWM);   // D tính riêng theo vận tốc đo (LIFT_KD)
 }
 
 // Coi vị trí hiện tại là 0 mm
 void liftZeroHere() {
-  liftZeroCounts = encLiftCount;
+  liftTrackCount();
+  liftZeroCounts = liftCount;
   liftTargetMM = 0; liftPosMM = 0;
   liftPid.reset();
   liftFault = false;
@@ -34,8 +56,13 @@ void liftZeroHere() {
 }
 
 static void liftMeasure() {
-  liftPosMM = LIFT_ENC_SIGN * (float)(encLiftCount - liftZeroCounts) / LIFT_COUNTS_PER_MM;
+  liftTrackCount();
+  liftPosMM = (float)(liftCount - liftZeroCounts) / LIFT_COUNTS_PER_MM;
+#if LIFT_ENC_SINGLE
+  liftVelMMS = liftDirSign * fabsf((float)encLiftCps) / LIFT_COUNTS_PER_MM;
+#else
   liftVelMMS = LIFT_ENC_SIGN * (float)encLiftCps / LIFT_COUNTS_PER_MM;
+#endif
 }
 
 void liftSetTarget(float mm) {
@@ -77,6 +104,7 @@ void liftUpdate(float dt) {
   // sát đáy, đích ~0: không ép motor vào cữ chặn
   if (liftTargetMM < 2.0f && liftPosMM < 6.0f) { pwm = fminf(pwm, 0.0f); if (liftPosMM < 2.0f) pwm = 0; liftPid.integ = 0; }
   liftPwmOut = (int)pwm;
+  if (liftPwmOut > 0) liftDirSign = 1; else if (liftPwmOut < 0) liftDirSign = -1;   // chiều đếm cho encoder 1 kênh
   motorSet(M_LIFT, LIFT_DIR * liftPwmOut);
 
   // chống kẹt

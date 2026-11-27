@@ -83,9 +83,10 @@ const bool INTAKE_REVERSE_WITH_R1 = true; // giữ R1 để đảo chiều xả 
 
 // =====================================================================
 // ===== SHOOTER (L298N #3, motor 2) — PID tốc độ bằng encoder =====
-// Encoder gắn ở trục nào thì CPR tính cho trục đó. Encoder 100 xung/vòng, đọc x4 => 400 count/vòng.
+// Encoder Hall của GA25 (ESP32#2 GPIO8/9), đọc x4. CPR = 4 × xung/vòng trục motor × tỉ số hộp số (nếu bánh bắn ở trục ra).
+// GA25 thường 11 xung/vòng trục motor => 44 × tỉ số. HIỆU CHỈNH: quay tay bánh bắn đúng 10 vòng, gõ 'e', lấy count / 10.
 // =====================================================================
-const float SHOOTER_CPR          = 400.0f;    // count / vòng của TRỤC GẮN ENCODER (nhân tỉ số truyền nếu có)
+const float SHOOTER_CPR          = 400.0f;    // count / vòng của BÁNH BẮN (ĐANG LÀ SỐ CŨ, phải đo lại cho GA25)
 const int   SHOOTER_ENC_SIGN     = 1;         // -1 nếu bật bắn mà rpm đo được ÂM
 const int   SHOOTER_DIR          = 1;         // -1 nếu bánh bắn quay ngược (hoặc đảo MOTOR_INVERT)
 const float SHOOTER_RPM_DEFAULT  = 3000.0f;   // tốc độ bắn mặc định
@@ -104,8 +105,11 @@ const uint32_t SHOOTER_AT_SPEED_MS = 250;     // phải giữ trong dung sai b�
 // ===== LIFT nâng hạ (L298N #4, motor 1) — PID vị trí bằng encoder =====
 // Lúc cấp điện coi như lift đang ở ĐÁY (= 0 mm). Gõ 'l' ở Serial để đặt lại 0 tại chỗ.
 // =====================================================================
-const float LIFT_COUNTS_PER_MM = 4.0f;        // HIỆU CHỈNH: nâng đúng 100 mm, đọc count (gõ 'e'), chia 100
-const int   LIFT_ENC_SIGN      = 1;           // -1 nếu nâng lên mà count GIẢM
+// Encoder lift: đĩa rãnh trên trục NEMA 17 + LM393, 1 kênh (ESP32#2 GPIO7) => ESP32#2 chỉ đếm cạnh, không biết chiều.
+// LIFT_ENC_SINGLE 1: ESP32#1 lấy chiều theo lệnh motor lift (lệnh lên => count tăng). Lift tự trôi xuống khi motor tắt sẽ bị đếm sai chiều.
+#define LIFT_ENC_SINGLE 1
+const float LIFT_COUNTS_PER_MM = 4.0f;        // HIỆU CHỈNH: nâng đúng 100 mm, đọc count (gõ 'e'), chia 100 (mỗi rãnh = 2 count)
+const int   LIFT_ENC_SIGN      = 1;           // chỉ dùng khi LIFT_ENC_SINGLE 0 (encoder 2 kênh): -1 nếu nâng lên mà count GIẢM
 const int   LIFT_DIR           = 1;           // -1 nếu bấm lên mà lift đi xuống (hoặc đảo MOTOR_INVERT)
 const float LIFT_MAX_MM        = 450.0f;      // hành trình tối đa
 const float LIFT_JOG_MMS       = 120.0f;      // tốc độ nâng/hạ khi giữ D-pad (mm/s)
