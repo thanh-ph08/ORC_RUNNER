@@ -75,7 +75,7 @@ static inline uint8_t orcCrc8(const uint8_t *d, uint8_t n) {   // CRC-8, đa th�
 
 // ---- Liên kết Pi <-> ESP32#1 bằng I2C riêng (PI_LINK_I2C = 1 trong config.h) ----
 // Bus riêng: Pi là MASTER (bus 3, GPIO5/6), ESP32#1 là SLAVE 0x43 trên Wire1 (GPIO18/19). Không dính bus của hub/ESP32#2/IMU.
-//  Pi -> ESP32#1 : Pi ghi 41 byte = PILINK_W_POSE + PosePacket(40 byte, có CRC)     ~100 lần/giây
+//  Pi -> ESP32#1 : Pi ghi 42 byte = PILINK_W_POSE + PosePacket(40 byte, có CRC) + logAck (logSeq Pi đã nhận)  ~100 lần/giây
 //  ESP32#1 -> Pi : Pi đọc 32 byte = PiStatus (lệnh đang chờ + 1 mảnh log)
 #define ORC_PILINK_ADDR     0x43
 #define PILINK_W_POSE       0xA7

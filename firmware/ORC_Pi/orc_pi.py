@@ -756,25 +756,30 @@ class PiLink(threading.Thread):
             if self.last_boot is not None:
                 print("[LINK] ESP32#1 vừa khởi động lại")
             self.last_boot = boot
-            self.last_set = None
+            self.last_set = c_set if not (flags & PILINK_F_SETPOSE) else (c_set - 1) & 0xFF
             self.last_cal, self.last_clear = c_cal, c_clear
-        if (flags & PILINK_F_SETPOSE) and c_set != self.last_set:
+            self.last_logseq = None
+
+        def newer(c, last):                              # bộ đếm vòng 8 bit: chỉ nhận khi TIẾN lên (gói cũ trả trễ thì bỏ)
+            return 0 < ((c - last) & 0xFF) < 128
+
+        if (flags & PILINK_F_SETPOSE) and newer(c_set, self.last_set):
             self.last_set = c_set
             self.q.put(bytes([FLOW_CMD_SET_POSE]) + st[6:18])
-        if c_cal != self.last_cal:
+        if newer(c_cal, self.last_cal):
             self.last_cal = c_cal
             self.q.put(bytes([FLOW_CMD_CAL_GYRO]))
-        if c_clear != self.last_clear:
+        if newer(c_clear, self.last_clear):
             self.last_clear = c_clear
             self.q.put(bytes([FLOW_CMD_CLEAR_RAW]))
         n, seq = st[18], st[19]
         if 0 < n <= 11:
-            if seq != self.last_logseq:                  # mảnh log mới
+            if self.last_logseq is None or seq == ((self.last_logseq + 1) & 0xFF):   # đúng mảnh kế tiếp
                 self.last_logseq = seq
                 self.q.put(bytes([FLOW_CMD_LOG]) + st[20:20 + n])
                 self.fresh += 1
             else:
-                self.dup += 1                            # đọc nhanh hơn ESP32 dựng gói: bỏ mảnh trùng
+                self.dup += 1                            # mảnh đã nhận / gói cũ: bỏ
 
     def run(self):
         while True:
@@ -783,13 +788,14 @@ class PiLink(threading.Thread):
                 if self.bus is None and not self._open():
                     time.sleep(1.0)
                     continue
-                self.bus.i2c_rdwr(i2c_msg.write(LINK_ADDR, bytes([PILINK_W_POSE]) + self.bot.packet()))
+                self.bus.i2c_rdwr(i2c_msg.write(LINK_ADDR, bytes([PILINK_W_POSE]) + self.bot.packet()
+                                                   + bytes([self.last_logseq if self.last_logseq is not None else 0])))
                 rd = i2c_msg.read(LINK_ADDR, 32)
                 self.bus.i2c_rdwr(rd)
                 self.handle(bytes(rd))
                 if time.monotonic() - self.stat_t > 10.0:
                     self.stat_t = time.monotonic()
-                    print(f"[LINK] 10 s qua: đọc đúng {self.ok} lần, sai {self.bad}, lỗi bus {self.err}; mảnh log mới {self.fresh}, trùng {self.dup}")
+                    print(f"[LINK] tổng từ lúc chạy: đọc đúng {self.ok} lần, sai {self.bad}, lỗi bus {self.err}; mảnh log mới {self.fresh}, trùng {self.dup}")
             except OSError as e:
                 self.err += 1
                 self._warn(f"[LINK] Không nói chuyện được với ESP32#1 (0x{LINK_ADDR:02X} trên bus {LINK_BUS}): {e} "

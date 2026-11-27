@@ -41,9 +41,10 @@ static portMUX_TYPE plMux = portMUX_INITIALIZER_UNLOCKED;
 uint32_t piLinkReads()  { return plReads; }
 uint32_t piLinkWrites() { return plWrites; }
 
+static volatile uint8_t plLogAck = 0;              // logSeq mà Pi báo đã nhận (gửi kèm mỗi lần Pi ghi)
 // Callback I2C (chạy trong luồng/ISR của driver): KHÔNG gọi Log, delay hay Serial ở đây.
 static void plOnReceive(int n) {
-  uint8_t tmp[sizeof(PosePacket) + 1];
+  uint8_t tmp[sizeof(PosePacket) + 2];               // [0xA7] + PosePacket + logAck
   int k = 0;
   while (Wire1.available()) {
     uint8_t b = (uint8_t)Wire1.read();
@@ -54,15 +55,19 @@ static void plOnReceive(int n) {
     portENTER_CRITICAL_SAFE(&plMux);
     memcpy(plRxBuf, tmp + 1, sizeof(PosePacket));
     plRxNew = true;
+    plLogAck = tmp[sizeof(tmp) - 1];
     portEXIT_CRITICAL_SAFE(&plMux);
   }
 }
 
 // Gói trạng thái dựng SẴN ở vòng lặp chính (odometryUpdate), callback chỉ chép ra — làm nặng trong callback
 // thì FIFO phát của ESP32 cạn trước khi kịp nạp (Pi chỉ nhận được byte đầu, phần còn lại 0xFF).
+// Log đi theo kiểu "gửi - chờ xác nhận": giữ nguyên mảnh hiện tại cho tới khi Pi báo đã nhận (logAck == logSeq)
+// rồi mới lấy mảnh mới. Nhờ vậy driver slave có trả gói cũ / trả trễ một nhịp thì log cũng không mất, không lặp.
 static PiStatus plStBuf;
-static volatile bool plStConsumed = true;
-static uint8_t plLogSeq = 0;           // true = gói đã được Pi đọc, cần dựng gói mới
+static volatile bool plStConsumed = true;          // true = gói đã được Pi đọc, cần dựng gói mới
+static uint8_t plLogSeq = 0, plLogLen = 0;
+static uint8_t plLogBuf[sizeof(((PiStatus *)0)->log)];
 
 static void plBuildStatus() {
   PiStatus st;
@@ -72,9 +77,13 @@ static void plBuildStatus() {
   st.cntSetPose = plCntSet; st.cntCalGyro = plCntCal; st.cntClearRaw = plCntClear;
   st.bootId = plBootId;
   st.setX = plSetX; st.setY = plSetY; st.setYaw = plSetYaw;
-  st.logLen = (uint8_t)Log.take(st.log, sizeof(st.log));
-  if (st.logLen) plLogSeq++;
+  if (plLogLen == 0 || plLogAck == plLogSeq) {      // mảnh trước đã được Pi nhận (hoặc chưa có mảnh): lấy mảnh mới
+    plLogLen = (uint8_t)Log.take(plLogBuf, sizeof(plLogBuf));
+    if (plLogLen) plLogSeq++;
+  }
+  st.logLen = plLogLen;
   st.logSeq = plLogSeq;
+  memcpy(st.log, plLogBuf, plLogLen);
   st.crc = orcCrc8((const uint8_t *)&st, sizeof(st) - 1);
   portENTER_CRITICAL(&plMux);
   plStBuf = st;
