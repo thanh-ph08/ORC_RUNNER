@@ -106,11 +106,10 @@ const uint32_t SHOOTER_AT_SPEED_MS = 250;     // phải giữ trong dung sai b�
 // ===== LIFT nâng hạ (L298N #4, motor 1) — PID vị trí bằng encoder =====
 // Lúc cấp điện coi như lift đang ở ĐÁY (= 0 mm). Gõ 'l' ở Serial để đặt lại 0 tại chỗ.
 // =====================================================================
-// Encoder lift: đĩa rãnh trên trục NEMA 17 + LM393, 1 kênh (ESP32#2 GPIO7) => ESP32#2 chỉ đếm cạnh, không biết chiều.
-// LIFT_ENC_SINGLE 1: ESP32#1 lấy chiều theo lệnh motor lift (lệnh lên => count tăng). Lift tự trôi xuống khi motor tắt sẽ bị đếm sai chiều.
-// LIFT_ENC_SINGLE 0: có thêm LM393 thứ 2 (GPIO6 ESP32#2, đặt LIFT_QUAD 1 trong ORC_Encoder.ino) => encoder 2 kênh, tự biết chiều.
-#define LIFT_ENC_SINGLE 1
-const float LIFT_COUNTS_PER_MM = 4.0f;        // HIỆU CHỈNH: nâng đúng 100 mm, đọc count (gõ 'e'), chia 100 (mỗi rãnh = 2 count 1 kênh, 4 count 2 kênh)
+// Encoder lift: NEMA 17 quay theo lift làm máy phát, 2 phase qua 2 LM393 (ESP32#2 GPIO7, GPIO6) => 2 kênh lệch 90°, tự biết chiều.
+// NEMA 1.8° => 200 count / vòng trục NEMA. LIFT_ENC_SINGLE 1 (cùng LIFT_QUAD 0): chỉ 1 phase, chiều lấy theo lệnh motor.
+#define LIFT_ENC_SINGLE 0
+const float LIFT_COUNTS_PER_MM = 4.0f;        // HIỆU CHỈNH: nâng đúng 100 mm, đọc count (gõ 'e'), chia 100 (2 phase: 200 count / vòng NEMA)
 const int   LIFT_ENC_SIGN      = 1;           // chỉ dùng khi LIFT_ENC_SINGLE 0 (encoder 2 kênh): -1 nếu nâng lên mà count GIẢM (hoặc đổi dây 2 cảm biến)
 const int   LIFT_DIR           = 1;           // -1 nếu bấm lên mà lift đi xuống (hoặc đảo MOTOR_INVERT)
 const float LIFT_MAX_MM        = 450.0f;      // hành trình tối đa

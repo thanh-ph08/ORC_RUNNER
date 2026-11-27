@@ -2,8 +2,10 @@
  * ORC_Encoder.ino — ESP32#2 (I2C SLAVE 0x42): đọc 2 encoder quadrature, gửi về ESP32#1
  *
  *   Encoder 1: bánh bắn banh — encoder Hall của động cơ GA25, 2 kênh A/B (GPIO8, GPIO9), đọc x4.
- *   Encoder 2: nâng hạ — đĩa có rãnh trên trục NEMA 17 + cảm biến khe LM393, CHỈ 1 KÊNH (chân D0 -> GPIO7).
- *              Một kênh không biết chiều: ESP32#2 chỉ đếm số cạnh (luôn tăng), ESP32#1 lấy chiều theo lệnh motor lift.
+ *   Encoder 2: nâng hạ — NEMA 17 quay theo trục lift làm "máy phát": điện áp 2 cuộn dây (phase A, B) qua 2 bộ so sánh LM393
+ *              ra 2 xung vuông lệch nhau sẵn 90° (D0 -> GPIO7, D0 thứ 2 -> GPIO6) => đọc x4, biết chiều.
+ *              NEMA 1.8° = 50 chu kỳ điện / vòng => 200 count / vòng trục NEMA. Đứng yên hoặc quay rất chậm thì gần như không có xung.
+ *              LIFT_QUAD 0: chỉ dùng 1 phase (GPIO7), ESP32#1 lấy chiều theo lệnh motor lift.
  *
  *   !! CẤP NGUỒN CẢ HAI CẢM BIẾN 3.3V. Cấp 5V thì tín hiệu ra 5V, ESP32-S3 không chịu được.
  *   !! Chân dùng INPUT_PULLUP nội; nếu xung yếu/nhiễu thì thêm trở 10k kéo lên 3.3V.
@@ -12,7 +14,7 @@
  * Chân I2C: SDA 11, SCL 12 (nối chung bus với ESP32#1, RPi, hub Ohstem; cần trở kéo lên 3.3V trên bus).
  *
  * Bắn: x4 => 4 × số xung/vòng của encoder (GA25 thường 11 xung/vòng ở trục motor, nhân tỉ số hộp số nếu đo ở trục ra).
- * Lift: đếm cả cạnh lên và xuống => 2 count mỗi rãnh của đĩa. ESP32#2 chỉ đếm + tính tốc độ (count/s);
+ * Lift: 2 phase => 4 count mỗi chu kỳ điện (200 / vòng NEMA 1.8°); 1 phase => 2 count mỗi chu kỳ. ESP32#2 chỉ đếm + tính tốc độ (count/s);
  * đổi sang rpm / mm do ESP32#1 làm (config.h).
  */
 #include <Arduino.h>
@@ -24,11 +26,11 @@
 // Board: OhStem ORC Control Hub rev D (ESP32-S3-WROOM). Trên S3, GPIO26–32 là flash, không dùng được.
 // Chân dưới đây là chân Grove của board: A0=GPIO1, A1=GPIO2, D3=GPIO6, D4=GPIO7 (đối chiếu chữ in trên board).
 const int SHOOTER_PIN_A = 8, SHOOTER_PIN_B = 9;     // encoder GA25: A -> GPIO8, B -> GPIO9
-const int LIFT_PIN      = 7;                        // LM393 D0 -> GPIO7 (kênh A)
-// 1 = có thêm LM393 thứ 2 ở GPIO6 (kênh B, lệch 1/4 rãnh so với kênh A) => đọc x4, biết chiều. Nhớ đặt LIFT_ENC_SINGLE 0 ở ESP32#1.
-#define LIFT_QUAD 0
-const int LIFT_PIN_B    = 6;                        // LM393 thứ 2 D0 -> GPIO6 (chỉ dùng khi LIFT_QUAD 1)
-const uint32_t LIFT_MIN_EDGE_US = 150;              // bỏ cạnh đến sớm hơn mức này (LM393 rung ở mép rãnh); tăng nếu đếm thừa
+const int LIFT_PIN      = 7;                        // LM393 (phase A của NEMA) D0 -> GPIO7
+// 1 = dùng cả 2 phase (LM393 thứ 2 ở GPIO6) => đọc x4, biết chiều. 0 = chỉ phase A. Phải khớp LIFT_ENC_SINGLE ở ESP32#1 (1 <-> 0).
+#define LIFT_QUAD 1
+const int LIFT_PIN_B    = 6;                        // LM393 (phase B của NEMA) D0 -> GPIO6
+const uint32_t LIFT_MIN_EDGE_US = 150;              // chỉ dùng khi LIFT_QUAD 0: bỏ cạnh rung của bộ so sánh; tăng nếu đếm thừa
 const int I2C_SDA = 11, I2C_SCL = 12;   // ESP32#2: SDA = GPIO11, SCL = GPIO12 (ESP32#1 vẫn dùng 21/22, mỗi board chọn chân riêng)
 const uint32_t I2C_CLOCK = 100000;     // khớp ESP32#1
 
