@@ -126,6 +126,11 @@ static void i2cBusRecover() {
                 stuck && digitalRead(I2C_SDA) == HIGH ? " -> đã gỡ" : (stuck ? " -> VẪN KẸT, kiểm tra nguồn/GND/dây của các board I2C" : ""));
 }
 
+RTC_NOINIT_ATTR static uint32_t lastStage;           // phần đang chạy — còn giữ sau khi watchdog reset, để biết treo ở đâu
+// ---- Đo thời gian từng phần của vòng lặp: in "[LOOP] ..." mỗi 2 s để biết phần nào làm chậm ----
+enum { T_PAD, T_LOGIMU, T_ODO, T_ENC, T_CTRL, T_SERVO, T_TELE, T_N };
+static const char *T_NAME[T_N] = {"BP32", "log/imu/serial", "pi-link", "encoder(ESP32#2)", "điều khiển", "servo(hub)", "telemetry"};
+
 void setup() {
   Serial.begin(115200);
   delay(300);
@@ -140,6 +145,9 @@ void setup() {
                       r == ESP_RST_SW ? "khởi động lại bằng phần mềm" :
                       r == ESP_RST_EXT ? "chân EN / nút reset" : "khác";
     Log.printf("[BOOT] lý do khởi động lại: %s (mã %d)\n", why, (int)r);
+    if ((r == ESP_RST_TASK_WDT || r == ESP_RST_INT_WDT || r == ESP_RST_WDT) && lastStage >= 1 && lastStage <= T_N)
+      Log.printf("[BOOT] lần trước TREO ở phần: %s\n", T_NAME[lastStage - 1]);
+    lastStage = 0;
   }
 #endif
 
@@ -172,13 +180,11 @@ void setup() {
 #endif
   BP32.enableVirtualDevice(false);          // không tạo "chuột ảo" từ touchpad PS4/PS5
   Log.println("Ghép tay PS4: giữ Share + PS. Tay PS5: giữ Create + PS.");
+  enableLoopWDT();                          // vòng lặp kẹt > 5 s thì tự reset, lần sau in "[BOOT] lần trước TREO ở phần: ..."
 }
 
-// ---- Đo thời gian từng phần của vòng lặp: in "[LOOP] ..." mỗi 2 s để biết phần nào làm chậm ----
-enum { T_PAD, T_LOGIMU, T_ODO, T_ENC, T_CTRL, T_SERVO, T_TELE, T_N };
-static const char *T_NAME[T_N] = {"BP32", "log/imu/serial", "pi-link", "encoder(ESP32#2)", "điều khiển", "servo(hub)", "telemetry"};
 static uint32_t tMax[T_N], loopCount = 0, ctrlCount = 0, loopMaxUs = 0;
-#define TIMED(id, code) do { uint32_t _t0 = micros(); code; uint32_t _d = micros() - _t0; if (_d > tMax[id]) tMax[id] = _d; } while (0)
+#define TIMED(id, code) do { lastStage = (id) + 1; uint32_t _t0 = micros(); code; uint32_t _d = micros() - _t0; if (_d > tMax[id]) tMax[id] = _d; } while (0)
 
 static void loopReport() {
   static uint32_t last = 0;

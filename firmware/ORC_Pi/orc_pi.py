@@ -724,6 +724,7 @@ class PiLink(threading.Thread):
         self.last_clear = None
         self.last_logseq = None
         self.fresh = 0
+        self.fresh_t = time.monotonic()
         self.dup = 0
         self.stat_t = time.monotonic()
         self.warn_t = 0.0
@@ -778,6 +779,7 @@ class PiLink(threading.Thread):
                 self.last_logseq = seq
                 self.q.put(bytes([FLOW_CMD_LOG]) + st[20:20 + n])
                 self.fresh += 1
+                self.fresh_t = time.monotonic()
             else:
                 self.dup += 1                            # mảnh đã nhận / gói cũ: bỏ
 
@@ -793,6 +795,9 @@ class PiLink(threading.Thread):
                 rd = i2c_msg.read(LINK_ADDR, 32)
                 self.bus.i2c_rdwr(rd)
                 self.handle(bytes(rd))
+                if self.ok and time.monotonic() - self.fresh_t > 4.0:
+                    self._warn("[LINK] ESP32#1 vẫn trả lời I2C nhưng gói KHÔNG ĐỔI >4 s (không có log mới): "
+                               "vòng lặp ESP32#1 có thể đang TREO — xem Serial Monitor, bấm EN để reset")
                 if time.monotonic() - self.stat_t > 10.0:
                     self.stat_t = time.monotonic()
                     print(f"[LINK] tổng từ lúc chạy: đọc đúng {self.ok} lần, sai {self.bad}, lỗi bus {self.err}; mảnh log mới {self.fresh}, trùng {self.dup}")
