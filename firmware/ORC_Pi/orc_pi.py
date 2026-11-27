@@ -774,7 +774,7 @@ class PiLink(threading.Thread):
             self.q.put(bytes([FLOW_CMD_CLEAR_RAW]))
         n, seq = st[18], st[19]
         if 0 < n <= 11:
-            if self.last_logseq is None or seq == ((self.last_logseq + 1) & 0xFF):   # đúng mảnh kế tiếp
+            if self.last_logseq is None or newer(seq, self.last_logseq):   # mảnh mới hơn (lỡ mất 1 mảnh cũng không kẹt)
                 self.last_logseq = seq
                 self.q.put(bytes([FLOW_CMD_LOG]) + st[20:20 + n])
                 self.fresh += 1
