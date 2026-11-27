@@ -58,7 +58,12 @@ static void plOnReceive(int n) {
   }
 }
 
-static void plOnRequest() {
+// Gói trạng thái dựng SẴN ở vòng lặp chính (odometryUpdate), callback chỉ chép ra — làm nặng trong callback
+// thì FIFO phát của ESP32 cạn trước khi kịp nạp (Pi chỉ nhận được byte đầu, phần còn lại 0xFF).
+static PiStatus plStBuf;
+static volatile bool plStConsumed = true;           // true = gói đã được Pi đọc, cần dựng gói mới
+
+static void plBuildStatus() {
   PiStatus st;
   memset(&st, 0, sizeof(st));
   st.magic = PILINK_STATUS_MAGIC;
@@ -68,7 +73,19 @@ static void plOnRequest() {
   st.setX = plSetX; st.setY = plSetY; st.setYaw = plSetYaw;
   st.logLen = (uint8_t)Log.take(st.log, sizeof(st.log));
   st.crc = orcCrc8((const uint8_t *)&st, sizeof(st) - 1);
-  Wire1.write((const uint8_t *)&st, sizeof(st));
+  portENTER_CRITICAL(&plMux);
+  plStBuf = st;
+  plStConsumed = false;
+  portEXIT_CRITICAL(&plMux);
+}
+
+static void plOnRequest() {
+  uint8_t out[sizeof(PiStatus)];
+  portENTER_CRITICAL_SAFE(&plMux);
+  memcpy(out, &plStBuf, sizeof(out));
+  plStConsumed = true;
+  portEXIT_CRITICAL_SAFE(&plMux);
+  Wire1.write(out, sizeof(out));
   plReads++;
 }
 
@@ -77,6 +94,7 @@ void odometryBegin() {
   Wire1.onReceive(plOnReceive);
   Wire1.onRequest(plOnRequest);
   bool ok = Wire1.begin((uint8_t)ORC_PILINK_ADDR, PILINK_SDA, PILINK_SCL, 100000);
+  plBuildStatus();
   Log.printf("[LINK] I2C slave 0x%02X (Pi master) trên GPIO%d/GPIO%d: %s\n", ORC_PILINK_ADDR, PILINK_SDA, PILINK_SCL, ok ? "OK" : "LỖI khởi tạo");
 }
 
@@ -149,6 +167,7 @@ static void applyPose(const PosePacket &p) {
 // Gọi mỗi vòng điều khiển
 #if PI_LINK_I2C
 void odometryUpdate() {
+  if (plStConsumed) plBuildStatus();               // chuẩn bị gói cho lần Pi đọc tiếp theo
   if (!plRxNew) return;
   PosePacket p;
   portENTER_CRITICAL(&plMux);
