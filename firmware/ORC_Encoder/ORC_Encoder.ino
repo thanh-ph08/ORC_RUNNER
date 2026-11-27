@@ -24,7 +24,10 @@
 // Board: OhStem ORC Control Hub rev D (ESP32-S3-WROOM). Trên S3, GPIO26–32 là flash, không dùng được.
 // Chân dưới đây là chân Grove của board: A0=GPIO1, A1=GPIO2, D3=GPIO6, D4=GPIO7 (đối chiếu chữ in trên board).
 const int SHOOTER_PIN_A = 8, SHOOTER_PIN_B = 9;     // encoder GA25: A -> GPIO8, B -> GPIO9
-const int LIFT_PIN      = 7;                        // LM393 D0 -> GPIO7 (1 kênh)
+const int LIFT_PIN      = 7;                        // LM393 D0 -> GPIO7 (kênh A)
+// 1 = có thêm LM393 thứ 2 ở GPIO6 (kênh B, lệch 1/4 rãnh so với kênh A) => đọc x4, biết chiều. Nhớ đặt LIFT_ENC_SINGLE 0 ở ESP32#1.
+#define LIFT_QUAD 0
+const int LIFT_PIN_B    = 6;                        // LM393 thứ 2 D0 -> GPIO6 (chỉ dùng khi LIFT_QUAD 1)
 const uint32_t LIFT_MIN_EDGE_US = 150;              // bỏ cạnh đến sớm hơn mức này (LM393 rung ở mép rãnh); tăng nếu đếm thừa
 const int I2C_SDA = 11, I2C_SCL = 12;   // ESP32#2: SDA = GPIO11, SCL = GPIO12 (ESP32#1 vẫn dùng 21/22, mỗi board chọn chân riêng)
 const uint32_t I2C_CLOCK = 100000;     // khớp ESP32#1
@@ -42,7 +45,11 @@ Quad shooterEnc = {SHOOTER_PIN_A, SHOOTER_PIN_B, 0, 0};
 
 // Lift: 1 kênh, đếm mọi cạnh (lên + xuống), bỏ cạnh rung
 struct Pulse { int pin; volatile int32_t count; volatile uint32_t lastUs; };
+#if LIFT_QUAD
+Quad liftEnc = {LIFT_PIN, LIFT_PIN_B, 0, 0};
+#else
 Pulse liftEnc = {LIFT_PIN, 0, 0};
+#endif
 
 // Bảng trạng thái x4: chỉ số = (trạng thái cũ << 2) | trạng thái mới; giá trị -1/0/+1
 static const int8_t QTAB[16] = {0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
@@ -101,7 +108,11 @@ void onReceiveCb(int n) {
 void setup() {
   Serial.begin(115200);
   quadBegin(shooterEnc);
+#if LIFT_QUAD
+  quadBegin(liftEnc);
+#else
   pulseBegin(liftEnc);
+#endif
 
 #if defined(CONFIG_IDF_TARGET_ESP32)
   // ESP32 thường: GPIO6–11 nối với flash của chip, dùng làm I2C sẽ làm board treo/khởi động lại liên tục.
