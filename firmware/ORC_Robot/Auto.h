@@ -278,7 +278,7 @@ void beginStep() {
 
 void autoUpdate(float dt) {
   // Huỷ: PS / Share, hoặc người lái gạt mạnh cần
-  if (padNow.ok && (PRESSED(ps) || PRESSED(share))) { stopAuto("huỷ bằng tay cầm"); return; }
+  if (padNow.ok && (PRESSED(l2) || PRESSED(ps) || PRESSED(share))) { stopAuto("huỷ bằng tay cầm"); return; }
   if (padNow.ok && (fabsf(padNow.lx) > 0.7f || fabsf(padNow.ly) > 0.7f || fabsf(padNow.rx) > 0.7f)) {
     stopAuto("người lái gạt cần"); return;
   }

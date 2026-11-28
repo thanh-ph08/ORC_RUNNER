@@ -1,7 +1,7 @@
 /*
  * Manual.h — CHẠY THỦ CÔNG bằng tay cầm PS4/PS5
  *
- *   Cần trái ........ chạy tới/lùi/ngang        Cần phải (ngang) .. xoay        Giữ L2 .. chạy chậm
+ *   Cần trái ........ chạy tới/lùi/ngang        Cần phải (ngang) .. xoay        Giữ R2 .. chạy chậm
  *   D-pad ↑ / ↓ ..... nâng / hạ lift (giữ), thả nút thì lift đứng giữ vị trí (PID)
  *   D-pad ← / → ..... giảm / tăng tốc độ bắn (± SHOOTER_RPM_STEP)
  *   △ Triangle ...... bật/tắt INTAKE            Giữ R1 ........ đảo chiều intake (xả kẹt)
@@ -11,7 +11,7 @@
  *   L3 .............. bật/tắt lái theo sân     R3 ............ bật/tắt giữ hướng bằng yaw
  *   Share ........... đặt toạ độ về điểm xuất phát
  *   Options ......... bật/tắt chế độ KHÔNG PID (lift chạy thẳng theo D-pad, bắn theo PWM, đèn cam)
- *   Giữ L1+R1 rồi bấm Options ... CHẠY TỰ ĐỘNG     PS / Share / gạt mạnh cần ... huỷ tự động
+ *   L2 .............. bật / tắt CHẠY TỰ ĐỘNG      PS / Share / gạt mạnh cần ... cũng huỷ tự động
  */
 #pragma once
 #include "config.h"
@@ -47,8 +47,8 @@ void manualUpdate(float dt) {
   }
   padLostSince = 0;
 
-  if (padNow.l1 && padNow.r1 && PRESSED(start)) { startAuto(); return; }
-  if (PRESSED(start)) {                          // Options (không giữ L1+R1): bật/tắt chế độ KHÔNG PID
+  if (PRESSED(l2)) { startAuto(); return; }     // L2: bật chạy tự động (bấm L2 lần nữa để tắt)
+  if (PRESSED(start)) {                          // Options: bật/tắt chế độ KHÔNG PID
     pidOff = !pidOff;
     if (!pidOff) liftHoldHere();                 // bật lại PID: giữ lift ở chỗ đang đứng
     setPadColor(pidOff ? 255 : 0, pidOff ? 100 : 255, 0);   // cam = không PID, xanh lá = bình thường
@@ -59,7 +59,7 @@ void manualUpdate(float dt) {
   if (PRESSED(share)) resetPoseToStart();
 
   // ---- Di chuyển ----
-  float sp = padNow.l2 ? MANUAL_SLOW : 1.0f;
+  float sp = padNow.r2 ? MANUAL_SLOW : 1.0f;      // giữ R2: chạy chậm
   float stickF = -padNow.ly, stickL = -padNow.lx, turn = -padNow.rx;
   float vx, vy;
   if (fieldCentric) {
