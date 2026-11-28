@@ -130,7 +130,7 @@ Hub Ohstem **driverV2** (I2C 0x54) với thư viện OhStemRobotics: servo 1 = g
 1. Arduino IDE → Preferences → Additional Boards Manager URLs, thêm:
    `https://raw.githubusercontent.com/ricardoquesada/esp32-arduino-lib-builder/master/bluepad32_files/package_esp32_bluepad32_index.json`
 2. Boards Manager: cài **esp32_bluepad32**. Board: **ESP32 Dev Module** (nhóm *ESP32 + Bluepad32*).
-3. Thư viện **OhStemRobotics**: tải https://github.com/truongphat2307/ohstem-orc-hub-robotics, chép thư mục vào `Documents/Arduino/libraries/`.
+3. **Không cần thư viện OhStemRobotics**: `Servos.h` điều khiển hub servo 0x54 thẳng qua I2C. (Thư viện bản 0.2.0 dùng `ledcAttach` của core ESP32 3.x nên không biên dịch được với board Bluepad32; nếu đã cài thì để đó cũng không sao.)
 4. Sửa `config.h` nếu cần, nạp. Ghép tay cầm: PS4 giữ **Share + PS**, PS5 giữ **Create + PS**.
 
 **ESP32#2 (`ORC_Encoder`)**: board ESP32 Dev Module (core esp32 hoặc esp32_bluepad32 đều được), không cần thư viện. Chưa nối ESP32#1 vẫn mở Serial Monitor được: xoay encoder bằng tay sẽ thấy count thay đổi.

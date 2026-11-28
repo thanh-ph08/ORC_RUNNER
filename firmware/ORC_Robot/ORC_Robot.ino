@@ -15,7 +15,7 @@
  *   Pad.h        tay cầm Bluepad32          Manual.h  chạy thủ công        Auto.h  chạy tự động
  *   path_data.h  đường đi do app tạo ra (chép đè vào đây)
  *
- * Thư viện: OhStemRobotics (https://github.com/truongphat2307/ohstem-orc-hub-robotics, chép vào Arduino/libraries)
+ * Thư viện: không cần cài thêm (hub servo Ohstem điều khiển thẳng qua I2C trong Servos.h)
  * Serial 115200: r = về điểm xuất phát, a = chạy tự động, s = dừng, t = bật/tắt in toạ độ,
  *   f = in số đếm chuột thô, g = in góc gyro cộng dồn, z = xoá bộ đếm hiệu chỉnh, c = RPi đo lại gyro,
  *   e = in count encoder, l = đặt lift 0 mm tại chỗ, +/- = tốc độ bắn ± 100 rpm, x = bật/tắt bắn
@@ -27,7 +27,6 @@
 #include <Wire.h>
 #include <math.h>
 #include <Bluepad32.h>
-#include <OhStemRobotics.h>
 
 #include "path_data.h"
 #include "config.h"

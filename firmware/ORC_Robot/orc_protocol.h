@@ -5,7 +5,7 @@
  *   ESP32#1 (ORC_Robot)   = I2C MASTER, đọc mọi thứ, điều khiển motor
  *   ESP32#2 (ORC_Encoder) = I2C slave 0x42, đọc 2 encoder (bắn banh + nâng hạ)
  *   RPi     (ORC_Pi)      = nối ESP32#1 bằng bus I2C riêng (Pi master, ESP32#1 slave 0x43; hoặc UART 921600 nếu PI_LINK_I2C 0), MPU6050 + chuột optical flow => toạ độ x, y, yaw
- *   Hub Ohstem driverV2   = I2C slave 0x54, chỉ dùng cho servo (thư viện OhStemRobotics)
+ *   Hub Ohstem driverV2   = I2C slave 0x54, chỉ dùng cho servo (Servos.h ghi thanh ghi trực tiếp)
  *
  * Mọi số nhiều byte là little-endian (ESP32 và RP2040 đều little-endian nên chép thẳng struct).
  */

@@ -126,7 +126,7 @@ const float LIFT_TOL_MM    = 3.0f;            // coi là "tới nơi" khi |sai| 
 const uint32_t LIFT_STALL_MS = 1500;          // PWM lớn mà không nhúc nhích bấy lâu => ngắt motor (chống cháy)
 
 // =====================================================================
-// ===== SERVO qua hub Ohstem driverV2 (thư viện OhStemRobotics) =====
+// ===== SERVO qua hub Ohstem driverV2 (I2C 0x54, Servos.h) =====
 // Servo 1 = gắp bóng (góc), Servo 2 = dẫn bóng (xoay liên tục 360°)
 // =====================================================================
 const bool GRIP_OPEN_AT_BOOT = true;
