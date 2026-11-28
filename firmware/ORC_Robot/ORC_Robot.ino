@@ -18,7 +18,7 @@
  * Thư viện: không cần cài thêm (hub servo Ohstem điều khiển thẳng qua I2C trong Servos.h)
  * Serial 115200: r = về điểm xuất phát, a = chạy tự động, s = dừng, t = bật/tắt in toạ độ,
  *   f = in số đếm chuột thô, g = in góc gyro cộng dồn, z = xoá bộ đếm hiệu chỉnh, c = RPi đo lại gyro,
- *   e = in count encoder, l = đặt lift 0 mm tại chỗ, u / n = thử motor lift lên / xuống 0.4 s (bỏ qua encoder), +/- = tốc độ bắn ± 100 rpm, x = bật/tắt bắn
+ *   e = in count encoder, l = đặt lift 0 mm tại chỗ, +/- = tốc độ bắn ± 100 rpm, x = bật/tắt bắn
  */
 #include <Arduino.h>
 #if __has_include(<esp_system.h>)
@@ -74,8 +74,6 @@ static void handleSerial() {
       case 'e': Log.printf("[ENC] shooter=%ld (%.0f rpm)  lift=%ld count (%.1f mm, ESP32#2 đếm %ld cạnh)\n", (long)encShooterCount, shooterRpm,
                               (long)(liftCount - liftZeroCounts), liftPosMM, (long)encLiftCount); break;
       case 'l': liftZeroHere(); break;
-      case 'u': liftTest(+1); break;
-      case 'n': liftTest(-1); break;
       case '+': shooterAdjust(+SHOOTER_RPM_STEP); Log.printf("[SHOOT] %.0f rpm\n", shooterTargetRpm); break;
       case '-': shooterAdjust(-SHOOTER_RPM_STEP); Log.printf("[SHOOT] %.0f rpm\n", shooterTargetRpm); break;
       case 'x': shooterToggle(); break;

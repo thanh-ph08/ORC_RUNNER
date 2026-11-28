@@ -85,31 +85,9 @@ bool liftBusy() {
   return fabsf(liftTargetMM - liftPosMM) > LIFT_TOL_MM || fabsf(liftVelMMS) > 15.0f;
 }
 
-// Thử motor lift TRỰC TIẾP (bỏ qua encoder, PID, chống kẹt): lệnh Serial 'u' = lên, 'n' = xuống, 0.4 s
-static int liftTestPwm = 0;
-static uint32_t liftTestUntil = 0;
-static int32_t liftTestStartCount = 0;
-void liftTest(int dir) {
-  liftTestPwm = dir > 0 ? LIFT_PWM_MAX_UP : -LIFT_PWM_MAX_DOWN;
-  liftTestUntil = millis() + 400;
-  liftTestStartCount = liftCount;
-  Log.printf("[LIFT] THỬ motor %s, PWM %d trong 0.4 s (bỏ qua encoder). Encoder ESP32#2: %s\n",
-             dir > 0 ? "LÊN" : "XUỐNG", liftTestPwm, encFresh() ? "OK" : "MẤT");
-}
-
 void liftUpdate(float dt) {
   liftMeasure();
-  if (liftTestUntil) {
-    if ((int32_t)(millis() - liftTestUntil) < 0) { motorSet(M_LIFT, LIFT_DIR * liftTestPwm); return; }
-    motorSet(M_LIFT, 0);
-    liftTestUntil = 0;
-    Log.printf("[LIFT] Thử xong: encoder đếm được %ld count (%.1f mm). 0 count = encoder không nhận xung; số âm khi thử LÊN = sai chiều\n",
-               (long)(liftCount - liftTestStartCount), (liftCount - liftTestStartCount) / LIFT_COUNTS_PER_MM);
-    liftFault = false; liftPid.reset(); liftTargetMM = liftPosMM;
-  }
   if (!encFresh()) {
-    static uint32_t warnMs = 0;
-    if (liftTargetMM != liftPosMM && millis() - warnMs > 2000) { warnMs = millis(); Log.println("[LIFT] Không chạy: mất encoder ESP32#2 (0x42). Lift chỉ chạy khi có encoder"); }
     liftPid.reset();
     liftPwmOut = 0;
     motorSet(M_LIFT, 0);
