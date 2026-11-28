@@ -8,9 +8,9 @@
 enum RobotMode { RM_MANUAL = 0, RM_AUTO = 1 };
 RobotMode robotMode = RM_MANUAL;
 bool telemetryOn = true;
-// Chế độ KHÔNG PID (bấm Options): lift chạy thẳng theo D-pad, bắn chạy PWM theo KFF, không cần encoder ESP32#2. Không chạy tự động được.
+// Chế độ KHÔNG PID (bấm Options): bánh bắn chạy PWM theo KFF, không cần encoder ESP32#2. Không chạy tự động được.
 bool pidOff = false;
-int liftOpenDir = 0;            // Manual.h đặt mỗi chu kỳ khi pidOff: +1 lên, -1 xuống, 0 thả
+int liftOpenDir = 0;            // Manual.h đặt mỗi chu kỳ theo D-pad: +1 lên, -1 xuống, 0 thả
 
 static inline float wrapPi(float a) {
   while (a > PI) a -= TWO_PI;

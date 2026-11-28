@@ -1,32 +1,33 @@
 /*
- * Lift.h — cơ cấu nâng hạ (L298N #4, motor 1) bằng PID vị trí + encoder (ESP32#2)
+ * Lift.h — nâng hạ (L298N #4, motor 1), ĐƠN GIẢN, không PID
  *
- * Vị trí 0 mm = vị trí lúc cấp điện (đáy). PID có tích phân + PWM nuôi (LIFT_HOLD_PWM) để GIỮ vị trí chống trọng lực.
- * Thả D-pad thì đích = vị trí hiện tại => lift đứng giữ yên.
- * Encoder 1 kênh (LM393, LIFT_ENC_SINGLE 1): chiều lấy theo lệnh motor, nên PWM nuôi LIFT_HOLD_PWM phải đủ giữ lift không tự trôi xuống.
- * Bảo vệ: PWM lớn mà không nhúc nhích quá LIFT_STALL_MS, hoặc mất encoder => ngắt motor (liftFault) cho tới khi có lệnh mới.
+ * Lái tay (MAN): giữ D-pad ↑ = LIFT_PWM_UP, ↓ = LIFT_PWM_DOWN, thả = LIFT_PWM_HOLD nếu vừa nâng (giữ khỏi tụt), 0 nếu vừa hạ.
+ *                Không cần encoder.
+ * Tự động (AUTO): chạy về chiều cao đích theo encoder (ESP32#2): xa thì PWM đầy, gần (< 30 mm) thì nửa PWM, tới nơi (< 5 mm) thì giữ.
+ *                Quá 5 s chưa tới nơi, hoặc mất encoder => tắt motor (chống cháy khi kẹt / sai chiều encoder).
  */
 #pragma once
 #include "config.h"
 #include "Common.h"
 #include "Motors.h"
-#include "PidCtrl.h"
 #include "Encoders.h"
 
 float liftTargetMM = 0;
-float liftPosMM = 0, liftVelMMS = 0;
+float liftPosMM = 0;
 bool liftFault = false;
 int liftPwmOut = 0;
 static int32_t liftZeroCounts = 0;
-static Pid liftPid;
-static uint32_t liftStallSince = 0;
+static bool liftHeldUp = false;           // đang ở trên cao => thả nút thì nuôi LIFT_PWM_HOLD
+static uint32_t liftMoveSince = 0;
 
-// Số đếm có dấu của lift. Encoder 2 kênh: lấy thẳng từ ESP32#2. Encoder 1 kênh (LIFT_ENC_SINGLE): ESP32#2 chỉ đếm cạnh
-// (luôn tăng), nên cộng/trừ theo chiều của lệnh motor gần nhất khác 0.
+static const float LIFT_TOL_MM = 5.0f, LIFT_SLOW_MM = 30.0f;
+static const uint32_t LIFT_AUTO_TIMEOUT_MS = 5000;
+
+// ---- Đếm encoder có dấu ----
 int32_t liftCount = 0;
 static int32_t liftRawLast = 0;
 static bool liftRawInit = false;
-static int liftDirSign = 1;          // +1 = đang lệnh đi lên, -1 = đi xuống
+static int liftDirSign = 1;
 
 static void liftTrackCount() {
 #if LIFT_ENC_SINGLE
@@ -34,99 +35,66 @@ static void liftTrackCount() {
   if (!liftRawInit) { liftRawLast = raw; liftRawInit = true; }
   int32_t d = raw - liftRawLast;
   liftRawLast = raw;
-  if (d < 0 || d > 2000) d = 0;      // ESP32#2 vừa khởi động lại / số vô lý: bỏ qua, không làm nhảy vị trí
+  if (d < 0 || d > 2000) d = 0;
   liftCount += liftDirSign * d;
 #else
   liftCount = LIFT_ENC_SIGN * encLiftCount;
 #endif
 }
 
-void liftBegin() {
-  liftPid.set(LIFT_KP, LIFT_KI, 0.0f, LIFT_I_MAX_PWM);   // D tính riêng theo vận tốc đo (LIFT_KD)
-}
+void liftBegin() {}
 
-// Coi vị trí hiện tại là 0 mm
+// Coi vị trí hiện tại là 0 mm (gõ 'l')
 void liftZeroHere() {
   liftTrackCount();
   liftZeroCounts = liftCount;
   liftTargetMM = 0; liftPosMM = 0;
-  liftPid.reset();
-  liftFault = false;
+  liftFault = false; liftHeldUp = false;
   Log.println("[LIFT] Đặt 0 mm tại vị trí hiện tại");
-}
-
-static void liftMeasure() {
-  liftTrackCount();
-  liftPosMM = (float)(liftCount - liftZeroCounts) / LIFT_COUNTS_PER_MM;
-#if LIFT_ENC_SINGLE
-  liftVelMMS = liftDirSign * fabsf((float)encLiftCps) / LIFT_COUNTS_PER_MM;
-#else
-  liftVelMMS = LIFT_ENC_SIGN * (float)encLiftCps / LIFT_COUNTS_PER_MM;
-#endif
 }
 
 void liftSetTarget(float mm) {
   float t = clampf(mm, 0.0f, LIFT_MAX_MM);
-  if (fabsf(t - liftTargetMM) > 0.01f) liftFault = false;     // lệnh mới => thử lại
+  if (fabsf(t - liftTargetMM) > 0.01f) { liftFault = false; liftMoveSince = 0; }
   liftTargetMM = t;
 }
 
-// Đi theo hướng dir (+1 lên, -1 xuống) với tốc độ jog; không cho đích chạy quá xa vị trí thật
-void liftJog(int dir, float dt) {
-  float t = liftTargetMM + dir * LIFT_JOG_MMS * dt;
-  t = clampf(t, liftPosMM - LIFT_MAX_LEAD_MM, liftPosMM + LIFT_MAX_LEAD_MM);
-  liftSetTarget(t);
-}
-// Thả nút: giữ đúng vị trí đang đứng
-void liftHoldHere() { liftSetTarget(liftPosMM); }
-
 bool liftBusy() {
-  if (liftFault || !encFresh()) return false;     // lỗi thì đừng bắt auto chờ vô ích
-  return fabsf(liftTargetMM - liftPosMM) > LIFT_TOL_MM || fabsf(liftVelMMS) > 15.0f;
+  if (liftFault || !encFresh()) return false;
+  return fabsf(liftTargetMM - liftPosMM) > LIFT_TOL_MM;
 }
 
 void liftUpdate(float dt) {
-  liftMeasure();
-  if (pidOff) {                                   // KHÔNG PID: chạy thẳng theo D-pad
-    static bool heldUp = false;                   // vừa nâng lên thì nuôi LIFT_HOLD_PWM để khỏi tụt
-    int pwm = 0;
-    if (liftOpenDir > 0) { pwm = (int)(LIFT_OPEN_PWM_FRAC * LIFT_PWM_MAX_UP); heldUp = true; }
-    else if (liftOpenDir < 0) { pwm = -(int)(LIFT_OPEN_PWM_FRAC * LIFT_PWM_MAX_DOWN); heldUp = false; }
-    else if (heldUp) pwm = (int)LIFT_HOLD_PWM;
-    liftPwmOut = pwm;
-    liftPid.reset();
-    liftFault = false;
-    liftTargetMM = liftPosMM;
-    motorSet(M_LIFT, LIFT_DIR * pwm);
-    return;
-  }
-  if (!encFresh()) {
-    liftPid.reset();
-    liftPwmOut = 0;
-    motorSet(M_LIFT, 0);
-    return;
-  }
-  if (liftFault) { liftPid.reset(); liftPwmOut = 0; motorSet(M_LIFT, 0); return; }
+  (void)dt;
+  liftTrackCount();
+  liftPosMM = (float)(liftCount - liftZeroCounts) / LIFT_COUNTS_PER_MM;
 
-  float err = liftTargetMM - liftPosMM;
-  float hold = (liftTargetMM > 5.0f) ? LIFT_HOLD_PWM : 0.0f;
-  // D theo vận tốc đo (không theo sai số) để lệnh nhảy không bị giật
-  float pwm = liftPid.update(err, dt, false) + hold - LIFT_KD * liftVelMMS;
-  pwm = clampf(pwm, -(float)LIFT_PWM_MAX_DOWN, (float)LIFT_PWM_MAX_UP);
-
-  // sát đáy, đích ~0: không ép motor vào cữ chặn
-  if (liftTargetMM < 2.0f && liftPosMM < 6.0f) { pwm = fminf(pwm, 0.0f); if (liftPosMM < 2.0f) pwm = 0; liftPid.integ = 0; }
-  liftPwmOut = (int)pwm;
-  if (liftPwmOut > 0) liftDirSign = 1; else if (liftPwmOut < 0) liftDirSign = -1;   // chiều đếm cho encoder 1 kênh
-  motorSet(M_LIFT, LIFT_DIR * liftPwmOut);
-
-  // chống kẹt
-  if (fabsf(pwm) > 0.7f * (pwm > 0 ? LIFT_PWM_MAX_UP : LIFT_PWM_MAX_DOWN) && fabsf(liftVelMMS) < 3.0f) {
-    if (!liftStallSince) liftStallSince = millis();
-    if (millis() - liftStallSince > LIFT_STALL_MS) {
-      liftFault = true;
-      motorSet(M_LIFT, 0);
-      Log.println("[LIFT] Kẹt / sai chiều encoder (LIFT_ENC_SIGN, LIFT_DIR) => ngắt motor. Ra lệnh mới để thử lại");
+  int pwm = 0;
+  if (robotMode == RM_AUTO) {
+    float err = liftTargetMM - liftPosMM;
+    if (!encFresh() || liftFault) {
+      pwm = 0;
+    } else if (fabsf(err) > LIFT_TOL_MM) {
+      float k = fabsf(err) < LIFT_SLOW_MM ? 0.5f : 1.0f;
+      pwm = err > 0 ? (int)(k * LIFT_PWM_UP) : -(int)(k * LIFT_PWM_DOWN);
+      if (!liftMoveSince) liftMoveSince = millis();
+      if (millis() - liftMoveSince > LIFT_AUTO_TIMEOUT_MS) {
+        liftFault = true; pwm = 0;
+        Log.println("[LIFT] Quá 5 s chưa tới chiều cao đích: kẹt hoặc encoder sai => tắt motor lift");
+      }
+    } else {
+      liftMoveSince = 0;
+      pwm = (liftTargetMM > LIFT_TOL_MM) ? LIFT_PWM_HOLD : 0;
     }
-  } else liftStallSince = 0;
+    liftHeldUp = liftTargetMM > LIFT_TOL_MM;
+  } else {
+    if (liftOpenDir > 0)      { pwm = LIFT_PWM_UP;   liftHeldUp = true; }
+    else if (liftOpenDir < 0) { pwm = -LIFT_PWM_DOWN; liftHeldUp = false; }
+    else                      pwm = liftHeldUp ? LIFT_PWM_HOLD : 0;
+    liftTargetMM = liftPosMM;
+    liftFault = false;
+  }
+  liftDirSign = pwm > 0 ? 1 : (pwm < 0 ? -1 : liftDirSign);
+  liftPwmOut = pwm;
+  motorSet(M_LIFT, LIFT_DIR * pwm);
 }
