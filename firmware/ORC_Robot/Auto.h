@@ -161,6 +161,7 @@ void holdPosition(float dt) {
 // ============================ ĐIỀU KHIỂN =============================
 void startAuto() {
   if (STEP_COUNT == 0) { Log.println("[AUTO] path_data.h trống"); return; }
+  if (pidOff) { Log.println("[AUTO] Không bắt đầu: đang ở chế độ KHÔNG PID, bấm Options để bật lại PID"); return; }
   if (!poseFresh()) { Log.println("[AUTO] Không bắt đầu: chưa có toạ độ từ RPi"); return; }
   if (poseFlags & POSE_FLAG_CALIBRATING) { Log.println("[AUTO] Không bắt đầu: RPi đang cân gyro, giữ yên xe"); return; }
   if (AUTO_RESET_POSE_ON_START) setPose(START_X_MM, START_Y_MM, START_TH_RAD);

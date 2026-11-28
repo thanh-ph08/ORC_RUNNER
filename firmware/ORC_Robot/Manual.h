@@ -10,6 +10,7 @@
  *   □ Square ........ GẮP bóng (servo 1, bấm đổi gắp/nhả)
  *   L3 .............. bật/tắt lái theo sân     R3 ............ bật/tắt giữ hướng bằng yaw
  *   Share ........... đặt toạ độ về điểm xuất phát
+ *   Options ......... bật/tắt chế độ KHÔNG PID (lift chạy thẳng theo D-pad, bắn theo PWM, đèn cam)
  *   Giữ L1+R1 rồi bấm Options ... CHẠY TỰ ĐỘNG     PS / Share / gạt mạnh cần ... huỷ tự động
  */
 #pragma once
@@ -38,6 +39,7 @@ void failsafeStopMechanisms() {
 
 void manualUpdate(float dt) {
   if (!padNow.ok) {
+    liftOpenDir = 0;                             // mất tay cầm: chế độ không PID cũng phải dừng lift
     stopDrive();
     if (!padLostSince) padLostSince = millis();
     if (millis() - padLostSince > 300) failsafeStopMechanisms();
@@ -46,6 +48,12 @@ void manualUpdate(float dt) {
   padLostSince = 0;
 
   if (padNow.l1 && padNow.r1 && PRESSED(start)) { startAuto(); return; }
+  if (PRESSED(start)) {                          // Options (không giữ L1+R1): bật/tắt chế độ KHÔNG PID
+    pidOff = !pidOff;
+    if (!pidOff) liftHoldHere();                 // bật lại PID: giữ lift ở chỗ đang đứng
+    setPadColor(pidOff ? 255 : 0, pidOff ? 100 : 255, 0);   // cam = không PID, xanh lá = bình thường
+    Log.printf("[MAN] Chế độ %s\n", pidOff ? "KHÔNG PID: lift chạy thẳng theo D-pad, bắn theo PWM" : "PID: bình thường");
+  }
   if (PRESSED(thumbL)) { fieldCentric = !fieldCentric; Log.printf("[MAN] Lái theo sân: %s\n", fieldCentric ? "BẬT" : "TẮT"); }
   if (PRESSED(thumbR)) { headingHold = !headingHold; holdTarget = poseTh; Log.printf("[MAN] Giữ hướng: %s\n", headingHold ? "BẬT" : "TẮT"); }
   if (PRESSED(share)) resetPoseToStart();
@@ -100,6 +108,7 @@ void manualUpdate(float dt) {
   }
 
   // ---- Lift: giữ D-pad thì đi, thả thì đứng giữ ----
+  liftOpenDir = (padNow.up && !padNow.down) ? 1 : (padNow.down && !padNow.up) ? -1 : 0;
   bool liftBtn = padNow.up != padNow.down;
   if (padNow.up && !padNow.down) liftJog(+1, dt);
   else if (padNow.down && !padNow.up) liftJog(-1, dt);

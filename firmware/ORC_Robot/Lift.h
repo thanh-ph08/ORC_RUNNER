@@ -87,6 +87,19 @@ bool liftBusy() {
 
 void liftUpdate(float dt) {
   liftMeasure();
+  if (pidOff) {                                   // KHÔNG PID: chạy thẳng theo D-pad
+    static bool heldUp = false;                   // vừa nâng lên thì nuôi LIFT_HOLD_PWM để khỏi tụt
+    int pwm = 0;
+    if (liftOpenDir > 0) { pwm = (int)(LIFT_OPEN_PWM_FRAC * LIFT_PWM_MAX_UP); heldUp = true; }
+    else if (liftOpenDir < 0) { pwm = -(int)(LIFT_OPEN_PWM_FRAC * LIFT_PWM_MAX_DOWN); heldUp = false; }
+    else if (heldUp) pwm = (int)LIFT_HOLD_PWM;
+    liftPwmOut = pwm;
+    liftPid.reset();
+    liftFault = false;
+    liftTargetMM = liftPosMM;
+    motorSet(M_LIFT, LIFT_DIR * pwm);
+    return;
+  }
   if (!encFresh()) {
     liftPid.reset();
     liftPwmOut = 0;

@@ -41,6 +41,14 @@ void shooterUpdate(float dt) {
   if (shooterCmdRpm < want) shooterCmdRpm = fminf(shooterCmdRpm + step, want);
   else shooterCmdRpm = fmaxf(shooterCmdRpm - step, want);
 
+  if (pidOff) {                                   // KHÔNG PID: PWM = KFF × rpm, không cần encoder
+    shooterFault = false;
+    shooterPid.reset();
+    shooterPwmOut = (shooterCmdRpm < 1.0f) ? 0 : (int)clampf(SHOOTER_KFF * shooterCmdRpm, 0.0f, (float)PWM_MAX);
+    shooterAtSpeed = shooterOn && fabsf(shooterCmdRpm - shooterTargetRpm) < 1.0f;
+    motorSet(M_SHOOTER, SHOOTER_DIR * shooterPwmOut);
+    return;
+  }
   if (!encFresh() || shooterCmdRpm < 1.0f) {
     if (!encFresh() && shooterOn && !shooterFault) {
       shooterFault = true;

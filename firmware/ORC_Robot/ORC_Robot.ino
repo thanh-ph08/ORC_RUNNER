@@ -92,7 +92,7 @@ static void telemetry() {
                 liftPosMM, liftTargetMM, liftFault ? " LỖI" : "",
                 gripClosed ? "đóng" : "mở", guideSpeedPct,
                 (unsigned long)poseErrCount, (unsigned long)encErrCount,
-                robotMode == RM_AUTO ? "AUTO" : "MAN", autoStatus());
+                robotMode == RM_AUTO ? "AUTO" : (pidOff ? "MAN KHÔNG-PID" : "MAN"), autoStatus());
   if (!poseFresh()) {
 #if PI_LINK_I2C
     Log.printf("  ! mất Raspberry Pi (toạ độ) — I2C: Pi đã đọc %lu lần, ghi %lu lần. Kiểm tra dây GPIO18/19 <-> Pi GPIO5/6, trở kéo lên 4.7k, GND, và orc_pi.py\n",

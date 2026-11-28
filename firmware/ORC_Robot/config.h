@@ -123,6 +123,7 @@ const int   LIFT_PWM_MAX_UP   = 900;          // giới hạn PWM khi đi lên
 const int   LIFT_PWM_MAX_DOWN = 600;          // giới hạn PWM khi đi xuống (nhẹ hơn vì có trọng lực)
 const float LIFT_HOLD_PWM  = 120.0f;          // PWM nuôi sẵn để giữ tải khi đang ở trên cao
 const float LIFT_TOL_MM    = 3.0f;            // coi là "tới nơi" khi |sai| < giá trị này
+const float LIFT_OPEN_PWM_FRAC = 0.8f;        // chế độ không PID: PWM khi giữ D-pad = tỉ lệ này × LIFT_PWM_MAX_UP / _DOWN
 const uint32_t LIFT_STALL_MS = 1500;          // PWM lớn mà không nhúc nhích bấy lâu => ngắt motor (chống cháy)
 
 // =====================================================================
