@@ -86,7 +86,7 @@ static void telemetry() {
   static uint32_t last = 0;
   if (!telemetryOn || millis() - last < 1000) return;   // 1 s/dòng: log qua I2C tới Pi không bị tràn
   last = millis();
-  Log.printf("x=%6.0f y=%6.0f th=%6.1f° | shoot %s %4.0f/%4.0f rpm%s | lift %5.1f→%5.1f mm%s | gắp:%s dẫn:%d | lỗi gói Pi=%lu, I2C enc=%lu | %s %s\n",
+  Log.printf("x=%6.0f y=%6.0f th=%6.1f° | shoot %s %4.0f/%4.0f rpm%s | lift %5.1f→%5.1f mm%s | gắp:%s nạp:%d | lỗi gói Pi=%lu, I2C enc=%lu | %s %s\n",
                 poseX, poseY, poseTh * RAD_TO_DEG,
                 shooterOn ? "ON " : "off", shooterRpm, shooterTargetRpm, shooterFault ? " LỖI" : "",
                 liftPosMM, liftTargetMM, liftFault ? " LỖI" : "",

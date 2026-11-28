@@ -9,7 +9,8 @@
  *   INTAKE  : p1 = 1 bật, 0 tắt, -1 đảo chiều
  *   SHOOTER : p1 = rpm (0 = tắt); không async thì chờ tới khi đủ tốc độ
  *   GRIP    : p1 = 1 gắp (đóng), 0 nhả (mở)
- *   GUIDE   : servo dẫn bóng, p1 = tốc độ -100..100 % (0 = dừng), p2 = thời gian chạy ms (0 = chạy mãi)
+ *   GUIDE   : nạp bóng (servo 2 là cửa), p1 ≠ 0 = bật nạp, 0 = tắt; p2 = thời gian nạp ms (0 = tới khi tắt).
+ *             Cửa chỉ mở khi bánh bắn đủ rpm, mỗi lần 1 quả => nhớ bật bánh bắn (bước SHOOTER) trước.
  *   CUSTOM  : gọi runCustomAction(id, tham số) — tự viết ở cuối file này
  *
  * Không có encoder bánh nên quỹ đạo có "đồng hồ co giãn": robot tụt lại xa điểm đích
@@ -394,9 +395,9 @@ bool runCustomAction(int id, float param, bool start) {
     case 1:   // Ví dụ: chờ param ms
       return millis() - t0 >= (uint32_t)param;
 
-    case 2:   // Ví dụ: bắn 1 quả: dẫn bóng chạy 400 ms rồi dừng (param = tốc độ %, mặc định 100)
-      if (start) guideSet(param != 0 ? (int)param : 100, 400);
-      return millis() - t0 >= 450;
+    case 2:   // Ví dụ: nạp bóng trong param ms (mặc định 1500): cửa mở mỗi khi bánh bắn đủ rpm
+      if (start) guideSet(1, param > 0 ? (uint32_t)param : 1500);
+      return millis() - t0 >= (param > 0 ? (uint32_t)param : 1500);
 
     default:
       Log.printf("[AUTO] Hành động riêng id=%d chưa được viết\n", id);

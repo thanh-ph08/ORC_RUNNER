@@ -6,7 +6,7 @@
  *   D-pad ← / → ..... giảm / tăng tốc độ bắn (± SHOOTER_RPM_STEP)
  *   △ Triangle ...... bật/tắt INTAKE            Giữ R1 ........ đảo chiều intake (xả kẹt)
  *   ✕ Cross ......... bật/tắt BẮN (PID tốc độ)
- *   ◯ Circle ........ DẪN bóng (servo 2, giữ để quay)
+ *   ◯ Circle ........ NẠP bóng (servo 2, giữ): cửa chỉ mở khi bánh bắn đủ rpm, mỗi lần 1 quả
  *   □ Square ........ GẮP bóng (servo 1, bấm đổi gắp/nhả)
  *   L3 .............. bật/tắt lái theo sân     R3 ............ bật/tắt giữ hướng bằng yaw
  *   Share ........... đặt toạ độ về điểm xuất phát
@@ -98,12 +98,9 @@ void manualUpdate(float dt) {
 
   // ---- Servo ----
   if (PRESSED(square)) gripToggle();
-  if (GUIDE_HOLD_TO_RUN) {
-    if (PRESSED(circle)) guideSet(GUIDE_SPEED_PCT);
-    if (!padNow.circle && padPrev.circle) guideSet(0);
-  } else if (PRESSED(circle)) {
-    guideSet(guideSpeedPct != 0 ? 0 : GUIDE_SPEED_PCT);
-  }
+  // Giữ ◯: nạp bóng — cửa chỉ mở khi bánh bắn đủ rpm, mỗi lần 1 quả
+  if (PRESSED(circle)) guideSet(1);
+  if (!padNow.circle && padPrev.circle) guideSet(0);
 
   // ---- Lift: giữ D-pad thì đi, thả thì đứng giữ ----
   liftOpenDir = (padNow.up && !padNow.down) ? 1 : (padNow.down && !padNow.up) ? -1 : 0;

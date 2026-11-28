@@ -1,7 +1,7 @@
 /*
  * Servos.h — 2 servo qua hub Ohstem driverV2 (I2C 0x54)
  *   Servo 1 (S1): GẮP bóng   — servo góc, mở / đóng
- *   Servo 2 (S2): DẪN bóng   — servo xoay liên tục 360°, tốc độ -100..100 %
+ *   Servo 2 (S2): CỬA NẠP bóng — servo 180°, chỉ mở khi bánh bắn đủ rpm
  *
  * Nói chuyện thẳng với hub qua I2C (cùng thanh ghi với thư viện OhStemRobotics: WHO_AM_I 42, firmware 40/41, servo S1..S4
  * ở 24/26/28/30, giá trị 16 bit góc 0..180). Không cần cài thư viện OhStemRobotics nữa: bản 0.2.0 của thư viện dùng
@@ -12,6 +12,7 @@
 #include "config.h"
 #include "orc_protocol.h"
 #include "Common.h"
+#include "Shooter.h"
 
 namespace hub {
 const uint8_t REG_MOTOR_INDEX = 16, REG_FW = 40, REG_WHOAMI = 42;
@@ -85,18 +86,35 @@ void gripSet(bool close) {
 }
 void gripToggle() { gripSet(!gripClosed); }
 
-// Servo 360°: 90° = đứng yên, dưới 90° quay một chiều, trên 90° quay chiều kia (cùng quy ước RobotServo::spin)
-// pct: -100..100. durationMs > 0: tự dừng sau bấy lâu.
+// Servo 2 (180°) = CỬA NẠP BÓNG vào bánh bắn. guideSet(pct != 0) = bật chế độ nạp, guideSet(0) = tắt (cửa đóng).
+// Khi đang nạp: chỉ mở cửa khi bánh bắn ĐÃ ĐỦ rpm (shooterAtSpeed), mở GUIDE_OPEN_MS cho 1 quả qua rồi đóng,
+// chờ bánh bắn hồi lại đủ rpm mới mở tiếp. durationMs > 0: tự tắt chế độ nạp sau bấy lâu.
+static bool guideGateOpen = false;
+static uint32_t guideGateMs = 0;
+static bool guideWaitLogged = false;
+
 void guideSet(int pct, uint32_t durationMs = 0) {
-  pct = constrain(pct, -100, 100);
-  guideSpeedPct = pct;
+  guideSpeedPct = (pct != 0) ? 1 : 0;
   guideStopAtMs = (pct != 0 && durationMs > 0) ? millis() + durationMs : 0;
-  int deg = (pct == 0) ? 90 + GUIDE_STOP_TRIM_DEG : (int)lroundf(90.0f + GUIDE_STOP_TRIM_DEG - pct * 0.9f);
-  guideWrite(constrain(deg, 0, 180));
+  if (!guideSpeedPct) { guideGateOpen = false; guideWrite(GUIDE_CLOSED_DEG); }
+  guideWaitLogged = false;
 }
 
 void servosUpdate() {
   if (guideStopAtMs && (int32_t)(millis() - guideStopAtMs) >= 0) guideSet(0);
+  if (!guideSpeedPct) return;
+  uint32_t now = millis();
+  if (guideGateOpen) {
+    if (now - guideGateMs >= GUIDE_OPEN_MS) { guideGateOpen = false; guideGateMs = now; guideWrite(GUIDE_CLOSED_DEG); }
+  } else if (now - guideGateMs >= GUIDE_OPEN_MS) {         // đóng ít nhất bấy lâu để rpm kịp tụt khi bóng đi qua
+    if (shooterOn && shooterAtSpeed) {
+      guideGateOpen = true; guideGateMs = now; guideWrite(GUIDE_OPEN_DEG);
+      guideWaitLogged = false;
+    } else if (!guideWaitLogged) {
+      guideWaitLogged = true;
+      Log.println(shooterOn ? "[NẠP] Chờ bánh bắn đủ rpm mới mở cửa" : "[NẠP] Bánh bắn đang tắt (bấm ✕) — cửa nạp giữ đóng");
+    }
+  }
 }
 
 void servosInitialPose() {

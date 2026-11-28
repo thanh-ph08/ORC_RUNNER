@@ -120,15 +120,15 @@ const int   LIFT_ENC_SIGN  = 1;      // -1 nếu nâng lên mà count giảm
 
 // =====================================================================
 // ===== SERVO qua hub Ohstem driverV2 (I2C 0x54, Servos.h) =====
-// Servo 1 = gắp bóng (góc), Servo 2 = dẫn bóng (xoay liên tục 360°)
+// Servo 1 = gắp bóng, Servo 2 = cửa nạp bóng vào bánh bắn (cả hai là servo 180°)
 // =====================================================================
 const bool GRIP_OPEN_AT_BOOT = true;
 const int  GRIP_OPEN_DEG  = 100;    // chỉnh theo cơ khí
 const int  GRIP_CLOSE_DEG = 40;
 const uint32_t GRIP_SETTLE_MS = 350;      // thời gian chờ khi auto gắp/nhả
-const int  GUIDE_SPEED_PCT = 100;         // 1..100, chiều quay: đổi dấu nếu quay ngược
-const int  GUIDE_STOP_TRIM_DEG = 0;       // servo 360° không đứng yên ở đúng 90°: chỉnh ±vài độ cho hết trôi
-const bool GUIDE_HOLD_TO_RUN = true;      // true: giữ nút tròn thì quay; false: bấm bật/tắt
+const int  GUIDE_CLOSED_DEG = 90;          // cửa nạp đóng (chặn bóng) — chỉnh theo cơ khí
+const int  GUIDE_OPEN_DEG   = 150;         // cửa nạp mở (cho bóng vào bánh bắn)
+const uint32_t GUIDE_OPEN_MS = 300;        // mở bấy lâu cho 1 quả đi qua rồi đóng, chờ bánh bắn đủ rpm lại mới mở tiếp
 
 // =====================================================================
 // ===== Lái thủ công =====
