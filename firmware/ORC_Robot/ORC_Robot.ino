@@ -5,13 +5,13 @@
  *   config.h     chân + hằng số hiệu chỉnh (chỉ sửa chỗ này)
  *   Motors.h     L298N × 4 (PWM trên IN1/IN2)
  *   Drive.h      4 bánh mecanum
- *   Odometry.h   toạ độ x, y, yaw từ RPi (UART)
- *   Imu.h        đọc MPU6050 (I2C 0x68) rồi gửi mẫu thô sang RPi qua UART
+ *   Odometry.h   liên kết I2C với RPi (slave 0x43, GPIO18/19): nhận toạ độ x, y, yaw, gửi lệnh + log + IMU
+ *   Imu.h        đọc MPU6050 (I2C 0x68 trên Control Hub) rồi đưa mẫu thô cho RPi
  *   Encoders.h   encoder từ ESP32#2
  *   Intake.h     hút bóng
  *   Shooter.h    bắn banh, PID tốc độ
- *   Lift.h       nâng hạ, PID vị trí
- *   Servos.h     gắp (servo 1) + dẫn bóng (servo 2, 360°) qua hub Ohstem driverV2
+ *   Lift.h       nâng hạ, PID vị trí (Options = chế độ không PID)
+ *   Servos.h     gắp (servo 1) + cửa nạp bóng (servo 2) qua hub Ohstem driverV2
  *   Pad.h        tay cầm Bluepad32          Manual.h  chạy thủ công        Auto.h  chạy tự động
  *   path_data.h  đường đi do app tạo ra (chép đè vào đây)
  *
@@ -147,6 +147,7 @@ enum { T_PAD, T_LOGIMU, T_ODO, T_ENC, T_CTRL, T_SERVO, T_TELE, T_N };
 static const char *T_NAME[T_N] = {"BP32", "log/imu/serial", "pi-link", "encoder(ESP32#2)", "điều khiển", "servo(hub)", "telemetry"};
 
 void setup() {
+  Serial.setTxBufferSize(2048);             // log USB không chặn vòng lặp (Log.h bỏ dòng khi bộ đệm đầy)
   Serial.begin(115200);
   delay(300);
   Log.println("\n=== ORC Robot — ESP32#1 ===");

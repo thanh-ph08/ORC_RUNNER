@@ -16,7 +16,7 @@ class LogTee : public Print {
  public:
   size_t write(uint8_t c) override { return write(&c, 1); }
   size_t write(const uint8_t *b, size_t n) override {
-    Serial.write(b, n);
+    if (Serial.availableForWrite() >= (int)n) Serial.write(b, n);   // USB không đủ chỗ thì bỏ (không chặn vòng điều khiển)
     portENTER_CRITICAL(&mux_);
     for (size_t i = 0; i < n; i++) {
       size_t nh = (head_ + 1) % N;

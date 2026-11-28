@@ -23,7 +23,8 @@ uint8_t poseFlags = 0;
 uint32_t poseLastOkMs = 0, poseErrCount = 0, poseOkCount = 0;
 bool poseEverOk = false;
 
-static uint8_t poseAckSeen = 0, poseAckWanted = 0;
+static uint8_t poseAckSeen = 0, poseAckAtSet = 0;  // setAck của Pi: lần mới nhất / lúc ra lệnh đặt toạ độ
+static bool poseAckSynced = false;                 // đã nhận ít nhất 1 gói (biết setAck hiện tại của Pi)
 static bool poseAwaitAck = false;
 static uint32_t poseAwaitMs = 0;
 
@@ -152,7 +153,7 @@ void setPose(float x, float y, float th) {
   memcpy(buf + 1, &x, 4); memcpy(buf + 5, &y, 4); memcpy(buf + 9, &th, 4);
   rpiSend(buf, sizeof(buf));
 #endif
-  poseAckWanted = (uint8_t)(poseAckSeen + 1);
+  poseAckAtSet = poseAckSeen;                       // Pi áp dụng xong thì setAck sẽ khác giá trị này
   poseAwaitAck = true;
   poseAwaitMs = millis();
 }
@@ -169,20 +170,31 @@ void flowClearRaw()      { uint8_t c = FLOW_CMD_CLEAR_RAW; rpiSend(&c, 1); }
 #endif
 
 static void applyPose(const PosePacket &p) {
+  if (!poseAckSynced) {                            // gói đầu tiên (ESP32#1 hoặc Pi vừa khởi động): lấy mốc setAck của Pi
+    poseAckSynced = true;
+    poseAckSeen = poseAckAtSet = p.setAck;
+    poseAwaitMs = millis();
+  }
   poseAckSeen = p.setAck;
-#if PI_LINK_I2C
-  if (p.setAck == poseAckWanted) plFlags &= (uint8_t)~PILINK_F_SETPOSE;     // Pi đã áp dụng lệnh đặt toạ độ
-#endif
+  poseLastOkMs = millis();                         // liên kết còn sống (kể cả khi đang chờ Pi xác nhận)
   if (poseAwaitAck) {
-    if (p.setAck == poseAckWanted) poseAwaitAck = false;
-    else if (millis() - poseAwaitMs > 200) { poseAwaitAck = false; Log.println("[POSE] Pi không xác nhận lệnh đặt toạ độ"); }
-    else return;                                   // gói cũ, chờ Pi áp dụng toạ độ mới
+    if (p.setAck != poseAckAtSet) {                // Pi đã áp dụng lệnh đặt toạ độ mới nhất
+      poseAwaitAck = false;
+#if PI_LINK_I2C
+      plFlags &= (uint8_t)~PILINK_F_SETPOSE;
+#endif
+    } else if (millis() - poseAwaitMs > 500) {
+      poseAwaitAck = false;
+#if PI_LINK_I2C
+      plFlags &= (uint8_t)~PILINK_F_SETPOSE;
+#endif
+      Log.println("[POSE] Pi không xác nhận lệnh đặt toạ độ (0.5 s)");
+    } else return;                                 // gói cũ, giữ toạ độ vừa đặt cho tới khi Pi áp dụng
   }
   poseX = p.x; poseY = p.y; poseTh = p.yaw;
   velX = p.vx; velY = p.vy; gyroRate = p.w;
   rawFlowX = p.rawX; rawFlowY = p.rawY; gyroAccumDeg = p.gyroDeg;
   poseFlags = p.flags;
-  poseLastOkMs = millis();
   poseEverOk = true;
   poseOkCount++;
 }

@@ -28,16 +28,20 @@ static int32_t liftRawLast = 0;
 static bool liftRawInit = false;
 static int liftDirSign = 1;          // +1 = đang lệnh đi lên, -1 = đi xuống
 
+// Cộng dồn từng bước thay đổi (không lấy thẳng số tổng của ESP32#2): ESP32#2 bật sau / khởi động lại giữa chừng
+// thì số tổng của nó nhảy, nhưng vị trí lift ở đây không nhảy theo (PID không bị giật lift lên/xuống).
 static void liftTrackCount() {
-#if LIFT_ENC_SINGLE
+  if (!encFresh()) return;
   int32_t raw = encLiftCount;
-  if (!liftRawInit) { liftRawLast = raw; liftRawInit = true; }
+  if (!liftRawInit) { liftRawLast = raw; liftRawInit = true; return; }
   int32_t d = raw - liftRawLast;
   liftRawLast = raw;
-  if (d < 0 || d > 2000) d = 0;      // ESP32#2 vừa khởi động lại / số vô lý: bỏ qua, không làm nhảy vị trí
+  if (d > 2000 || d < -2000) return;  // ESP32#2 vừa khởi động lại (số tổng về 0): bỏ bước nhảy này
+#if LIFT_ENC_SINGLE
+  if (d < 0) return;
   liftCount += liftDirSign * d;
 #else
-  liftCount = LIFT_ENC_SIGN * encLiftCount;
+  liftCount += LIFT_ENC_SIGN * d;
 #endif
 }
 
@@ -93,6 +97,7 @@ void liftUpdate(float dt) {
     if (liftOpenDir > 0) { pwm = (int)(LIFT_OPEN_PWM_FRAC * LIFT_PWM_MAX_UP); heldUp = true; }
     else if (liftOpenDir < 0) { pwm = -(int)(LIFT_OPEN_PWM_FRAC * LIFT_PWM_MAX_DOWN); heldUp = false; }
     else if (heldUp) pwm = (int)LIFT_HOLD_PWM;
+    if (pwm > 0) liftDirSign = 1; else if (pwm < 0) liftDirSign = -1;   // chiều đếm cho encoder 1 kênh
     liftPwmOut = pwm;
     liftPid.reset();
     liftFault = false;

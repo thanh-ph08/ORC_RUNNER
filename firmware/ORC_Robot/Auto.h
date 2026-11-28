@@ -184,6 +184,7 @@ void stopAuto(const char *why) {
   setPhase(AP_IDLE);
   asyncCustomId = -1;
   liftSetTarget(liftPosMM);          // giữ nguyên chiều cao đang đứng
+  guideSet(0);                       // đóng cửa nạp (bánh bắn, intake giữ nguyên để người lái tự tắt)
   setPadColor(0, 255, 0);
   Log.printf("[AUTO] DỪNG: %s (%.1f s)\n", why, (millis() - autoStartMs) / 1000.0f);
 }
