@@ -103,20 +103,28 @@ const float SHOOTER_TOL_RPM   = 120.0f;       // coi là "đã đủ tốc độ
 const uint32_t SHOOTER_AT_SPEED_MS = 250;     // phải giữ trong dung sai bấy lâu
 
 // =====================================================================
-// ===== LIFT nâng hạ (L298N #4, motor 1) — ĐƠN GIẢN, KHÔNG PID =====
-// Lái tay: giữ D-pad ↑/↓ = motor chạy LIFT_PWM_UP / LIFT_PWM_DOWN, thả ra = LIFT_PWM_HOLD (nếu vừa nâng) để khỏi tụt.
-//          Lái tay KHÔNG cần encoder.
-// Tự động: chạy lên/xuống tới chiều cao trong path rồi giữ, cần encoder (ESP32#2). Lúc cấp điện coi lift ở ĐÁY = 0 mm.
+// ===== LIFT nâng hạ (L298N #4, motor 1) — PID vị trí bằng encoder =====
+// Lúc cấp điện coi như lift đang ở ĐÁY (= 0 mm). Gõ 'l' ở Serial để đặt lại 0 tại chỗ.
 // =====================================================================
-const int   LIFT_DIR       = 1;      // -1 nếu bấm ↑ mà lift đi xuống
-const int   LIFT_PWM_UP    = 800;    // 0..1023: PWM khi nâng
-const int   LIFT_PWM_DOWN  = 500;    // 0..1023: PWM khi hạ (nhẹ hơn vì có trọng lực)
-const int   LIFT_PWM_HOLD  = 120;    // 0..1023: PWM giữ khi đứng trên cao. Tăng nếu thả nút mà lift tụt, giảm nếu lift tự bò lên
-const float LIFT_COUNTS_PER_MM = 4.0f;   // chỉ cho TỰ ĐỘNG: nâng đúng 100 mm, gõ 'e', lấy count / 100 (NEMA 2 phase: 200 count / vòng)
-const float LIFT_MAX_MM    = 450.0f; // chỉ cho TỰ ĐỘNG: chiều cao tối đa
-// Encoder lift: NEMA 17 làm máy phát, 2 phase qua 2 LM393 (ESP32#2 GPIO7, GPIO6). Thường không cần đổi 2 dòng dưới.
-#define LIFT_ENC_SINGLE 0            // 1 = chỉ 1 phase (khớp LIFT_QUAD 0 ở ORC_Encoder.ino)
-const int   LIFT_ENC_SIGN  = 1;      // -1 nếu nâng lên mà count giảm
+// Encoder lift: NEMA 17 quay theo lift làm máy phát, 2 phase qua 2 LM393 (ESP32#2 GPIO7, GPIO6) => 2 kênh lệch 90°, tự biết chiều.
+// NEMA 1.8° => 200 count / vòng trục NEMA. LIFT_ENC_SINGLE 1 (cùng LIFT_QUAD 0): chỉ 1 phase, chiều lấy theo lệnh motor.
+#define LIFT_ENC_SINGLE 0
+const float LIFT_COUNTS_PER_MM = 4.0f;        // HIỆU CHỈNH: nâng đúng 100 mm, đọc count (gõ 'e'), chia 100 (2 phase: 200 count / vòng NEMA)
+const int   LIFT_ENC_SIGN      = 1;           // chỉ dùng khi LIFT_ENC_SINGLE 0 (encoder 2 kênh): -1 nếu nâng lên mà count GIẢM (hoặc đổi dây 2 cảm biến)
+const int   LIFT_DIR           = 1;           // -1 nếu bấm lên mà lift đi xuống (hoặc đảo MOTOR_INVERT)
+const float LIFT_MAX_MM        = 450.0f;      // hành trình tối đa
+const float LIFT_JOG_MMS       = 120.0f;      // tốc độ nâng/hạ khi giữ D-pad (mm/s)
+const float LIFT_MAX_LEAD_MM   = 25.0f;       // đích không được vượt xa vị trí thật quá mức này (an toàn)
+const float LIFT_KP = 14.0f;                  // PWM trên mỗi mm sai
+const float LIFT_KI = 8.0f;                   // PWM trên mỗi (mm·s) — giữ chống trọng lực
+const float LIFT_KD = 0.6f;                   // PWM trên mỗi mm/s
+const float LIFT_I_MAX_PWM = 350.0f;
+const int   LIFT_PWM_MAX_UP   = 900;          // giới hạn PWM khi đi lên
+const int   LIFT_PWM_MAX_DOWN = 600;          // giới hạn PWM khi đi xuống (nhẹ hơn vì có trọng lực)
+const float LIFT_HOLD_PWM  = 120.0f;          // PWM nuôi sẵn để giữ tải khi đang ở trên cao
+const float LIFT_TOL_MM    = 3.0f;            // coi là "tới nơi" khi |sai| < giá trị này
+const float LIFT_OPEN_PWM_FRAC = 0.8f;        // chế độ không PID: PWM khi giữ D-pad = tỉ lệ này × LIFT_PWM_MAX_UP / _DOWN
+const uint32_t LIFT_STALL_MS = 1500;          // PWM lớn mà không nhúc nhích bấy lâu => ngắt motor (chống cháy)
 
 // =====================================================================
 // ===== SERVO qua hub Ohstem driverV2 (I2C 0x54, Servos.h) =====
